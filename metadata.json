@@ -1,0 +1,10 @@
+{
+  "name": "Remix SeizeOn Trip",
+  "description": "Discover authentic local food, stays, artisans, and personalized AI itineraries across Varanasi and cultural journeys.",
+  "requestFramePermissions": [
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

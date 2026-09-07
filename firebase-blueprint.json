@@ -1,0 +1,81 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Registered user profile and preferences",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string", "maxLength": 100 },
+        "email": { "type": "string", "maxLength": 150 },
+        "role": { "type": "string" },
+        "avatarUrl": { "type": "string" },
+        "homeCity": { "type": "string", "maxLength": 100 },
+        "bio": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "name", "email"]
+    },
+    "Trip": {
+      "title": "Trip",
+      "description": "User created travel itinerary",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "title": { "type": "string", "maxLength": 120 },
+        "destination": { "type": "string", "maxLength": 120 },
+        "daysCount": { "type": "number" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["userId", "title", "destination"]
+    },
+    "Place": {
+      "title": "Place",
+      "description": "Catalog of places and heritage spots in Varanasi",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string", "maxLength": 100 },
+        "category": { "type": "string" },
+        "rating": { "type": "number" },
+        "description": { "type": "string", "maxLength": 1000 },
+        "imageUrl": { "type": "string" }
+      },
+      "required": ["id", "name", "category"]
+    },
+    "Review": {
+      "title": "Review",
+      "description": "Community reviews for places",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "placeId": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string", "maxLength": 100 },
+        "rating": { "type": "number" },
+        "comment": { "type": "string", "maxLength": 1000 },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["placeId", "userId", "userName", "rating", "comment"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Stores user profile and account details"
+    },
+    "/trips/{tripId}": {
+      "schema": "Trip",
+      "description": "Stores user saved trip itineraries"
+    },
+    "/places/{placeId}": {
+      "schema": "Place",
+      "description": "Stores catalog places and spots"
+    },
+    "/reviews/{reviewId}": {
+      "schema": "Review",
+      "description": "Stores user reviews and ratings for places"
+    }
+  }
+}
