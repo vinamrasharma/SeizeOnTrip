@@ -11,6 +11,7 @@ import {
   LocationSearchResult,
   CulturalGuideData,
   AirQualityData,
+  DistanceInfo,
 } from '../types';
 import { currentUser as initialUser, mockPlaces, sampleTrip, mockNotifications, mockReviews } from '../data/mockData';
 import {
@@ -73,12 +74,15 @@ interface AppContextType {
   setCustomLocation: (customLoc: {
     name: string;
     locality?: string;
+    city?: string;
+    state?: string;
+    country?: string;
     coordinates: { lat: number; lng: number };
     formattedAddress?: string;
     source?: string;
   }) => void;
   searchLocations: (query: string) => Promise<LocationSearchResult[]>;
-  calculateDistanceTo: (targetCoords?: { lat: number; lng: number }) => { distanceKm: number; formatted: string; walkMinutes: number };
+  calculateDistanceTo: (targetCoords?: { lat: number; lng: number }) => DistanceInfo;
   // Places & Saved
   places: Place[];
   savedPlaceIds: string[];
@@ -369,11 +373,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return () => unsubscribe();
   }, []);
 
-  // Calculate dynamic distance from user's current location to target coordinates
+  // Calculate dynamic distance and direction from user's current location to target coordinates
   const calculateDistanceTo = useCallback(
-    (targetCoords?: { lat: number; lng: number }) => {
-      if (!targetCoords || !targetCoords.lat || !targetCoords.lng) {
-        return { distanceKm: 1.2, formatted: '1.2 km away', walkMinutes: 15 };
+    (targetCoords?: { lat: number; lng: number }): DistanceInfo => {
+      if (!targetCoords || typeof targetCoords.lat !== 'number' || typeof targetCoords.lng !== 'number') {
+        return {
+          distanceKm: 1.2,
+          formatted: '1.2 km away',
+          walkMinutes: 15,
+          driveMinutes: 5,
+          bearing: 'Nearby',
+          directionsUrl: '#',
+        };
       }
       const lat1 = currentLocation.coordinates.lat;
       const lon1 = currentLocation.coordinates.lng;
@@ -383,12 +394,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const R = 6371; // Earth radius in km
       const dLat = ((lat2 - lat1) * Math.PI) / 180;
       const dLon = ((lon2 - lon1) * Math.PI) / 180;
+      const lat1Rad = (lat1 * Math.PI) / 180;
+      const lat2Rad = (lat2 * Math.PI) / 180;
+
       const a =
         Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-        Math.cos((lat1 * Math.PI) / 180) *
-          Math.cos((lat2 * Math.PI) / 180) *
-          Math.sin(dLon / 2) *
-          Math.sin(dLon / 2);
+        Math.cos(lat1Rad) * Math.cos(lat2Rad) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
       const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
       const km = R * c;
 
@@ -397,14 +408,37 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         formatted = '0 m • Right here';
       } else if (km < 1) {
         formatted = `${Math.round(km * 1000)} m away`;
-      } else {
+      } else if (km < 10) {
         formatted = `${km.toFixed(1)} km away`;
+      } else {
+        formatted = `${Math.round(km).toLocaleString()} km away`;
       }
 
       // Walking speed ~ 4.5 km/h -> ~13 mins per km
       const walkMinutes = Math.max(1, Math.round(km * 13));
+      // Driving / Auto speed ~ 25-30 km/h in urban India -> ~2.4 mins per km
+      const driveMinutes = Math.max(2, Math.round(km * 2.4));
 
-      return { distanceKm: km, formatted, walkMinutes };
+      // Calculate compass bearing
+      const y = Math.sin(dLon) * Math.cos(lat2Rad);
+      const x = Math.cos(lat1Rad) * Math.sin(lat2Rad) - Math.sin(lat1Rad) * Math.cos(lat2Rad) * Math.cos(dLon);
+      const brng = ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
+      const compassDirections = [
+        'North (N)',
+        'North-East (NE)',
+        'East (E)',
+        'South-East (SE)',
+        'South (S)',
+        'South-West (SW)',
+        'West (W)',
+        'North-West (NW)',
+      ];
+      const bearing = compassDirections[Math.round(brng / 45) % 8];
+
+      const travelmode = km > 2.5 ? 'driving' : 'walking';
+      const directionsUrl = `https://www.google.com/maps/dir/?api=1&origin=${lat1},${lon1}&destination=${lat2},${lon2}&travelmode=${travelmode}`;
+
+      return { distanceKm: km, formatted, walkMinutes, driveMinutes, bearing, directionsUrl };
     },
     [currentLocation.coordinates]
   );
@@ -418,11 +452,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         distance: distInfo.formatted,
         distanceKm: distInfo.distanceKm,
         walkMinutes: distInfo.walkMinutes,
+        driveMinutes: distInfo.driveMinutes,
+        bearing: distInfo.bearing,
       };
     });
   }, [rawPlaces, calculateDistanceTo]);
 
-  // Fetch live GPS location from browser and reverse-geocode using free API
+  // Fetch live GPS location from browser with maximum hardware precision and reverse-geocode
   const fetchLiveLocation = async () => {
     if (typeof window === 'undefined' || !navigator.geolocation) {
       const err = 'Geolocation is not supported by your browser.';
@@ -433,73 +469,109 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     setIsLocating(true);
     setLocationError(null);
-    showToast('Detecting live GPS coordinates...');
+    showToast('📡 Acquiring high-precision GPS lock...');
 
     try {
+      // Hardware GPS query: enableHighAccuracy: true, maximumAge: 0 forces fresh sensor reading
       const position = await new Promise<GeolocationPosition>((resolve, reject) => {
         navigator.geolocation.getCurrentPosition(resolve, reject, {
           enableHighAccuracy: true,
-          timeout: 10000,
-          maximumAge: 30000,
+          timeout: 12000,
+          maximumAge: 0,
         });
       });
 
       const lat = position.coords.latitude;
       const lng = position.coords.longitude;
-      const accuracy = Math.round(position.coords.accuracy || 10);
+      const accuracy = Math.round(position.coords.accuracy || 8);
 
-      // Call our free Reverse Geocoding API endpoint
+      // Call our high-precision reverse-geocoding backend
       try {
-        const res = await fetch(`/api/location/reverse-geocode?lat=${lat}&lng=${lng}`);
+        const res = await fetch(`/api/location/reverse-geocode?lat=${lat}&lng=${lng}&accuracy=${accuracy}`);
         if (res.ok) {
           const data = await res.json();
           const detectedLocation: UserLocation = {
-            locality: data.locality || 'Assi Ghat',
-            sublocality: data.sublocality || data.closestVaranasiHub || 'Varanasi',
-            city: data.city || 'Varanasi',
-            state: data.state || 'Uttar Pradesh',
-            country: data.country || 'India',
+            locality: data.locality || 'Current Location',
+            sublocality: data.sublocality || data.city || '',
+            city: data.city || 'Detected City',
+            state: data.state || '',
+            country: data.country || '',
             formattedAddress: data.formattedAddress,
             coordinates: { lat, lng },
             accuracy,
             isLiveGps: true,
             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            source: data.source || 'Free Reverse Geocoding API',
+            source: data.source || 'High-Accuracy Reverse Geocoding',
           };
 
           setCurrentLocation(detectedLocation);
-          setSelectedCity(data.city || 'Varanasi');
-          showToast(`📍 Live Location: ${detectedLocation.locality} (${accuracy}m GPS)`);
+          if (data.city) setSelectedCity(data.city);
+          showToast(`📍 Accurate Location: ${detectedLocation.locality} (±${accuracy}m GPS)`);
           return;
         }
       } catch (apiErr) {
-        console.warn('Backend geocode API error, using raw coords:', apiErr);
+        console.warn('Backend geocode API error, trying client-side fallback:', apiErr);
       }
 
-      // Fallback with raw GPS
+      // Client-side fallback if backend API is unreachable
+      try {
+        const osmRes = await fetch(
+          `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&addressdetails=1&zoom=18`
+        );
+        if (osmRes.ok) {
+          const osmData = await osmRes.json();
+          const addr = osmData.address || {};
+          const spot = addr.amenity || addr.building || addr.road || addr.suburb || addr.neighbourhood || 'Current Spot';
+          const city = addr.city || addr.town || addr.municipality || addr.county || 'Detected City';
+          const detectedLocation: UserLocation = {
+            locality: `${spot}${city ? `, ${city}` : ''}`,
+            sublocality: addr.suburb || addr.neighbourhood || city,
+            city,
+            state: addr.state || '',
+            country: addr.country || '',
+            formattedAddress: osmData.display_name,
+            coordinates: { lat, lng },
+            accuracy,
+            isLiveGps: true,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            source: 'OpenStreetMap Direct Precision Geocoding',
+          };
+          setCurrentLocation(detectedLocation);
+          if (city) setSelectedCity(city);
+          showToast(`📍 Accurate Location: ${detectedLocation.locality} (±${accuracy}m GPS)`);
+          return;
+        }
+      } catch (osmErr) {
+        console.warn('Direct OSM geocode error:', osmErr);
+      }
+
+      // Exact GPS coordinates fallback (No assumptions)
+      const latLabel = `${Math.abs(lat).toFixed(4)}° ${lat >= 0 ? 'N' : 'S'}`;
+      const lngLabel = `${Math.abs(lng).toFixed(4)}° ${lng >= 0 ? 'E' : 'W'}`;
       const fallbackLocation: UserLocation = {
-        locality: `${lat.toFixed(4)}°N, ${lng.toFixed(4)}°E`,
-        sublocality: 'Varanasi Region',
-        city: 'Varanasi',
-        state: 'Uttar Pradesh',
-        country: 'India',
+        locality: `Live Position (${latLabel}, ${lngLabel})`,
+        sublocality: `Accuracy: ±${accuracy}m`,
+        city: 'Your GPS Location',
+        state: '',
+        country: '',
+        formattedAddress: `Coordinates: ${latLabel}, ${lngLabel} (±${accuracy}m accuracy)`,
         coordinates: { lat, lng },
         accuracy,
         isLiveGps: true,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        source: 'Live Device GPS',
+        source: 'Device Hardware GPS',
       };
       setCurrentLocation(fallbackLocation);
-      showToast(`📍 Live GPS Detected: ${fallbackLocation.locality}`);
+      showToast(`📍 High-Accuracy GPS: ${fallbackLocation.locality}`);
     } catch (geoErr: any) {
       console.warn('Geolocation error:', geoErr);
       let errorMsg = 'Could not access location.';
       if (geoErr.code === 1) {
-        errorMsg = 'Location permission was denied. You can select an iconic locality from the list.';
+        errorMsg = 'Location permission was denied. Please allow browser location access or choose a locality.';
       } else if (geoErr.code === 2) {
-        errorMsg = 'Location signal unavailable. Selected Varanasi default locality.';
+        errorMsg = 'GPS signal temporarily unavailable. Please try again.';
       } else if (geoErr.code === 3) {
-        errorMsg = 'Location detection timed out. Please try again.';
+        errorMsg = 'GPS acquisition timed out. Please try again.';
       }
       setLocationError(errorMsg);
       showToast(errorMsg);
@@ -522,6 +594,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       source: 'Selected Varanasi Locality',
     });
+    setSelectedCity('Varanasi');
     setLocationError(null);
     showToast(`📍 Locality switched to ${loc.name}! Distances updated.`);
   };
@@ -529,23 +602,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const setCustomLocation = (customLoc: {
     name: string;
     locality?: string;
+    city?: string;
+    state?: string;
+    country?: string;
     coordinates: { lat: number; lng: number };
     formattedAddress?: string;
     source?: string;
   }) => {
+    const locCity = customLoc.city || customLoc.locality || 'Custom Spot';
     setCurrentLocation({
       locality: customLoc.name,
-      sublocality: customLoc.locality || 'Custom Spot',
-      city: 'Varanasi',
-      state: 'Uttar Pradesh',
-      country: 'India',
-      formattedAddress: customLoc.formattedAddress || `${customLoc.name}, Varanasi`,
+      sublocality: customLoc.locality || customLoc.name,
+      city: locCity,
+      state: customLoc.state || '',
+      country: customLoc.country || '',
+      formattedAddress: customLoc.formattedAddress || `${customLoc.name}, ${locCity}`,
       coordinates: customLoc.coordinates,
-      accuracy: 15,
+      accuracy: 12,
       isLiveGps: false,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      source: customLoc.source || 'Written Location / Nearby Place',
+      source: customLoc.source || 'Written Location / Custom Spot',
     });
+    if (locCity) setSelectedCity(locCity);
     setLocationError(null);
     showToast(`📍 Location set to "${customLoc.name}"! Distances updated.`);
   };

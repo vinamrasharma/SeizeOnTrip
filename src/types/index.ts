@@ -1,4 +1,15 @@
-export type CategoryType = 'food' | 'stay' | 'shopping' | 'experience' | 'transport' | 'attraction';
+export type CategoryType = 'food' | 'stay' | 'shopping' | 'experience' | 'transport' | 'attraction' | 'culture';
+
+export interface PlaceGeneralDetails {
+  openingTime?: string;
+  closingTime?: string;
+  aartiOrRitualTimings?: string; // e.g. "Morning Aarti: 07:00 AM, Evening Aarti: 07:00 PM"
+  entryFee?: string; // e.g. "Free / ₹50 for museum entry"
+  bestTimeToVisit?: string; // e.g. "Early Morning 05:30 AM - 08:00 AM"
+  dressCodeAndProtocol?: string; // e.g. "Modest clothing, shoes off before steps"
+  highlights?: string[];
+  contactOrBooking?: string;
+}
 
 export interface Place {
   id: string;
@@ -11,7 +22,7 @@ export interface Place {
   reviewCount: number;
   priceLevel: string; // e.g. '₹₹', 'Free', '₹₹₹'
   priceNumeric?: number;
-  distance: string; // e.g. '12 km', '1.2 km'
+  distance?: string; // e.g. '12 km', '1.2 km'
   imageUrl: string;
   galleryUrls?: string[];
   isVerified?: boolean;
@@ -28,10 +39,24 @@ export interface Place {
   address?: string;
   phone?: string;
   timings?: string;
+  generalDetails?: PlaceGeneralDetails;
   coordinates?: {
     lat: number;
     lng: number;
   };
+  distanceKm?: number;
+  walkMinutes?: number;
+  driveMinutes?: number;
+  bearing?: string;
+}
+
+export interface DistanceInfo {
+  distanceKm: number;
+  formatted: string;
+  walkMinutes: number;
+  driveMinutes: number;
+  bearing: string;
+  directionsUrl: string;
 }
 
 export interface Review {
@@ -67,6 +92,9 @@ export interface ItineraryStop {
   rating?: number;
   badge?: string; // 'Local Business', 'Verified Gem', etc.
   iconType?: 'ghat' | 'food' | 'shopping' | 'stay' | 'walk';
+  localTip?: string;
+  costEstimate?: string;
+  notes?: string;
   coordinates?: {
     lat: number;
     lng: number;
@@ -79,17 +107,22 @@ export interface TripDay {
   dateStr?: string;
   stops: ItineraryStop[];
   estimatedCost: number;
+  localTip?: string;
 }
 
 export interface Trip {
   id: string;
   title: string;
+  subtitle?: string;
   destination: string;
-  daysCount: number;
-  budget: string;
+  daysCount?: number;
+  totalDays?: number;
+  budget?: string;
+  budgetTier?: string;
   totalEstimatedCost: number;
   interests: string[];
-  travelType: string;
+  travelType?: string;
+  travellingAs?: string;
   days: TripDay[];
   currentDay: number;
   coverImage: string;
@@ -111,7 +144,7 @@ export interface PlannerFormData {
   days: number;
   budget: string;
   interests: string[];
-  travellingAs: 'Solo' | 'Couple' | 'Family' | 'Friends';
+  travellingAs: 'Solo' | 'Couple' | 'Family' | 'Friends' | 'With Strangers' | string;
   pace: 'Relaxed' | 'Balanced' | 'Active';
   dietary: string[];
   stayVibe: string;

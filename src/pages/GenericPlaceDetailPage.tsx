@@ -2,6 +2,9 @@ import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { FavoriteButton } from '../components/common/FavoriteButton';
 import { RatingStars } from '../components/common/RatingStars';
+import { PlaceGeneralDetailsPanel } from '../components/places/PlaceGeneralDetailsPanel';
+import { PlaceExpenseComparisonCard } from '../components/places/PlaceExpenseComparisonCard';
+import { DirectionsModal } from '../components/common/DirectionsModal';
 import {
   ChevronLeft,
   Share2,
@@ -110,9 +113,21 @@ export const GenericPlaceDetailPage: React.FC<{ placeId: string }> = ({ placeId 
           <span className="font-medium text-gray-800">{place.priceLevel}</span>
         </div>
 
-        <div className="flex items-center gap-1.5 mt-2.5 text-sm text-gray-500">
-          <MapPin size={16} className="text-gray-400 shrink-0" />
-          <span>{place.distance} • Varanasi</span>
+        <div className="flex items-center gap-2 mt-2.5 text-sm text-gray-600 flex-wrap">
+          <button
+            type="button"
+            onClick={() => setShowDirectionsModal(true)}
+            className="flex items-center gap-1.5 font-semibold text-[#005B49] bg-emerald-50 hover:bg-emerald-100/80 px-2.5 py-0.5 rounded-full border border-emerald-200/60 transition-colors cursor-pointer"
+            title="Click to view route and directions from current location"
+          >
+            <Navigation size={13} className="shrink-0" />
+            <span>{place.distance || 'Calculated distance'}</span>
+          </button>
+          <span className="text-gray-300">•</span>
+          <div className="flex items-center gap-1 text-gray-700 font-medium">
+            <MapPin size={14} className="text-emerald-700 shrink-0" />
+            <span>{place.location || place.address || 'Tourism Destination'}</span>
+          </div>
         </div>
 
         {/* AI match card */}
@@ -174,6 +189,16 @@ export const GenericPlaceDetailPage: React.FC<{ placeId: string }> = ({ placeId 
             ))}
           </div>
         )}
+
+        {/* Complete Travel & Visit Expenses (Shows Travel and Visit Expenses Differently) */}
+        <PlaceExpenseComparisonCard
+          place={place}
+          className="mt-6"
+          onOpenDirections={() => setShowDirectionsModal(true)}
+        />
+
+        {/* General Details Panel (Opening, Closing, Aarti & Ritual Timings) */}
+        <PlaceGeneralDetailsPanel place={place} />
 
         {/* Address and Timings */}
         <div className="mt-6 pt-6 border-t border-gray-100 space-y-3 text-xs sm:text-sm text-gray-600">
@@ -263,34 +288,11 @@ export const GenericPlaceDetailPage: React.FC<{ placeId: string }> = ({ placeId 
         </div>
       </div>
 
-      {showDirectionsModal && (
-        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl border border-gray-100 animate-in fade-in zoom-in-95">
-            <h3 className="text-lg font-bold text-gray-900">Directions to {place.name}</h3>
-            <p className="text-xs text-gray-500 mt-1">{place.address}</p>
-            <div className="my-4 p-3.5 rounded-2xl bg-emerald-50 border border-emerald-100 text-xs text-emerald-900 leading-relaxed">
-              <strong>Quickest Route:</strong> {place.distance} via Godowlia / Dashashwamedh corridor. Walking or local auto-rickshaw recommended.
-            </div>
-            <div className="flex gap-2.5">
-              <button
-                onClick={() => {
-                  setShowDirectionsModal(false);
-                  navigate('/trip/trip-varanasi-3day/map');
-                }}
-                className="flex-1 py-3 rounded-xl bg-[#005B49] text-white font-bold text-xs cursor-pointer"
-              >
-                View on Trip Map
-              </button>
-              <button
-                onClick={() => setShowDirectionsModal(false)}
-                className="px-4 py-3 rounded-xl border border-gray-200 text-gray-700 font-bold text-xs hover:bg-gray-50 cursor-pointer"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <DirectionsModal
+        place={place}
+        isOpen={showDirectionsModal}
+        onClose={() => setShowDirectionsModal(false)}
+      />
     </div>
   );
 };

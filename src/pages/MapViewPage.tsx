@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import L from 'leaflet';
 import { useApp } from '../context/AppContext';
 import { LiveLocationBar } from '../components/common/LiveLocationBar';
 import {
@@ -12,30 +13,246 @@ import {
   Compass,
   ChevronRight,
   ExternalLink,
+  Route,
+  ArrowRight,
+  Calendar,
+  Sparkles,
+  Info,
 } from 'lucide-react';
+import { ItineraryStop } from '../types';
 
 export const MapViewPage: React.FC = () => {
   const { goBack, navigate, currentTrip, currentLocation, isLocating, fetchLiveLocation, showToast } = useApp();
-  const [selectedStopIndex, setSelectedStopIndex] = useState<number>(0);
-  const [zoomLevel, setZoomLevel] = useState<number>(1);
-  const [activeLayer, setActiveLayer] = useState<'all' | 'food' | 'culture'>('all');
 
-  const activeDay = currentTrip.days[0]; // Day 1
-  const stops = activeDay.stops;
+  const [selectedDayIndex, setSelectedDayIndex] = useState<number>(0);
+  const [selectedStopIndex, setSelectedStopIndex] = useState<number>(0);
+  const [showDirectionsDrawer, setShowDirectionsDrawer] = useState<boolean>(false);
+
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+  const mapInstanceRef = useRef<L.Map | null>(null);
+  const markersRef = useRef<L.Marker[]>([]);
+  const polylineRef = useRef<L.Polyline | null>(null);
+  const userMarkerRef = useRef<L.Marker | null>(null);
+
+  const activeDay = currentTrip.days[selectedDayIndex] || currentTrip.days[0];
+  const stops = activeDay?.stops || [];
   const currentStop = stops[selectedStopIndex] || stops[0];
 
-  // Coordinates for Varanasi map SVG representation
-  const mapMarkers = [
-    { id: 'assi', x: 220, y: 380, label: '1', name: 'Assi Ghat', time: '09:00 AM', stopIndex: 0 },
-    { id: 'lassi', x: 310, y: 270, label: '2', name: 'Blue Lassi Shop', time: '11:30 AM', stopIndex: 1 },
-    { id: 'handloom', x: 380, y: 220, label: '3', name: 'Shiv Handloom Studio', time: '02:00 PM', stopIndex: 2 },
-    { id: 'dashashwamedh', x: 290, y: 320, label: '4', name: 'Dashashwamedh Ghat', time: '06:30 PM', stopIndex: 3 },
-  ];
+  // Helper to get coordinates for a stop (with safe fallback if missing)
+  const getStopCoordinates = (stop: ItineraryStop, index: number): [number, number] => {
+    if (stop.coordinates?.lat && stop.coordinates?.lng) {
+      return [stop.coordinates.lat, stop.coordinates.lng];
+    }
+    // Fallback based on city / destination
+    const baseLat = currentLocation?.lat || 25.3176;
+    const baseLng = currentLocation?.lng || 82.9739;
+    return [baseLat + (index * 0.008 - 0.015), baseLng + (index * 0.006 - 0.01)];
+  };
+
+  // Initialize Map
+  useEffect(() => {
+    if (!mapContainerRef.current) return;
+
+    if (!mapInstanceRef.current) {
+      const initialCoords: [number, number] = stops.length > 0 ? getStopCoordinates(stops[0], 0) : [25.3176, 82.9739];
+
+      const map = L.map(mapContainerRef.current, {
+        center: initialCoords,
+        zoom: 14,
+        zoomControl: false,
+      });
+
+      // Free OpenStreetMap Tile Layer (Zero Cost, Worldwide Coverage)
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+        maxZoom: 19,
+      }).addTo(map);
+
+      mapInstanceRef.current = map;
+    }
+
+    return () => {
+      // Clean up map when unmounting
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove();
+        mapInstanceRef.current = null;
+      }
+    };
+  }, []);
+
+  // Update Markers, Route Polyline & Bounds when activeDay or stops change
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map || stops.length === 0) return;
+
+    // Clear existing markers
+    markersRef.current.forEach((m) => m.remove());
+    markersRef.current = [];
+
+    // Clear existing route line
+    if (polylineRef.current) {
+      polylineRef.current.remove();
+      polylineRef.current = null;
+    }
+
+    const latLngs: [number, number][] = [];
+
+    stops.forEach((stop, index) => {
+      const coords = getStopCoordinates(stop, index);
+      latLngs.push(coords);
+
+      const isSelected = index === selectedStopIndex;
+
+      // Custom high-contrast numbered pin icon
+      const customIcon = L.divIcon({
+        className: 'custom-stop-marker',
+        html: `
+          <div class="relative flex items-center justify-center cursor-pointer group">
+            <div class="w-9 h-9 rounded-full ${
+              isSelected
+                ? 'bg-[#005B49] ring-4 ring-emerald-300 ring-opacity-80 scale-110 shadow-xl'
+                : 'bg-emerald-800 shadow-md hover:scale-105'
+            } text-white font-extrabold flex items-center justify-center text-xs border-2 border-white transition-all">
+              ${index + 1}
+            </div>
+            <div class="absolute -bottom-1 w-2 h-2 bg-inherit rotate-45 border-r border-b border-white"></div>
+          </div>
+        `,
+        iconSize: [36, 36],
+        iconAnchor: [18, 36],
+        popupAnchor: [0, -36],
+      });
+
+      const marker = L.marker(coords, { icon: customIcon }).addTo(map);
+
+      // Popup with place info and action
+      const popupHtml = `
+        <div style="font-family: inherit; padding: 4px; min-width: 170px;">
+          <div style="font-size: 10px; font-weight: 700; color: #005B49; text-transform: uppercase; margin-bottom: 2px;">
+            Stop ${index + 1} • ${stop.time}
+          </div>
+          <div style="font-size: 14px; font-weight: 800; color: #111827; line-height: 1.2; margin-bottom: 4px;">
+            ${stop.title}
+          </div>
+          <div style="font-size: 11px; color: #4B5563; margin-bottom: 6px;">
+            ${stop.locationName}
+          </div>
+          <div style="display: flex; align-items: center; justify-content: space-between; font-size: 11px; border-top: 1px solid #E5E7EB; padding-top: 6px;">
+            <span style="font-weight: 700; color: #15803D;">${stop.priceLevel || 'Free'}</span>
+            <span style="color: #6B7280;">${stop.duration}</span>
+          </div>
+        </div>
+      `;
+      marker.bindPopup(popupHtml);
+
+      marker.on('click', () => {
+        setSelectedStopIndex(index);
+      });
+
+      markersRef.current.push(marker);
+    });
+
+    // Draw route line connecting Stop 1 -> Stop 2 -> Stop 3 -> Stop 4
+    if (latLngs.length > 1) {
+      const polyline = L.polyline(latLngs, {
+        color: '#005B49',
+        weight: 4,
+        opacity: 0.85,
+        dashArray: '8, 8',
+      }).addTo(map);
+
+      polylineRef.current = polyline;
+    }
+
+    // Fit map bounds to encompass all stops comfortably
+    if (latLngs.length > 0) {
+      const bounds = L.latLngBounds(latLngs);
+      map.fitBounds(bounds, { padding: [60, 60], maxZoom: 15 });
+    }
+  }, [selectedDayIndex, stops]);
+
+  // Center on selected stop when user taps a card
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map || !stops[selectedStopIndex]) return;
+
+    const coords = getStopCoordinates(stops[selectedStopIndex], selectedStopIndex);
+    map.panTo(coords, { animate: true });
+
+    // Open popup for selected marker
+    const targetMarker = markersRef.current[selectedStopIndex];
+    if (targetMarker) {
+      targetMarker.openPopup();
+    }
+  }, [selectedStopIndex]);
+
+  // Update user's live GPS pin on the map
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map || !currentLocation) return;
+
+    if (userMarkerRef.current) {
+      userMarkerRef.current.setLatLng([currentLocation.lat, currentLocation.lng]);
+    } else {
+      const userIcon = L.divIcon({
+        className: 'user-location-marker',
+        html: `
+          <div class="relative flex items-center justify-center">
+            <div class="absolute w-7 h-7 rounded-full bg-blue-400 opacity-60 animate-ping"></div>
+            <div class="w-4 h-4 rounded-full bg-blue-600 border-2 border-white shadow-lg"></div>
+          </div>
+        `,
+        iconSize: [28, 28],
+        iconAnchor: [14, 14],
+      });
+
+      userMarkerRef.current = L.marker([currentLocation.lat, currentLocation.lng], { icon: userIcon })
+        .addTo(map)
+        .bindPopup('<b>You are here</b><br>Live GPS Position');
+    }
+  }, [currentLocation]);
+
+  // Handlers for zoom and locate
+  const handleZoomIn = () => {
+    mapInstanceRef.current?.zoomIn();
+  };
+
+  const handleZoomOut = () => {
+    mapInstanceRef.current?.zoomOut();
+  };
+
+  const handleRecenter = async () => {
+    if (currentLocation && mapInstanceRef.current) {
+      mapInstanceRef.current.setView([currentLocation.lat, currentLocation.lng], 15);
+      showToast('Centered on your live location');
+    } else {
+      await fetchLiveLocation();
+    }
+  };
+
+  // Open external turn-by-turn navigation in Google Maps
+  const openExternalDirections = (stop: ItineraryStop, index: number) => {
+    const coords = getStopCoordinates(stop, index);
+    const dest = `${coords[0]},${coords[1]}`;
+    let origin = '';
+    if (currentLocation) {
+      origin = `${currentLocation.lat},${currentLocation.lng}`;
+    } else if (index > 0 && stops[index - 1]) {
+      const prevCoords = getStopCoordinates(stops[index - 1], index - 1);
+      origin = `${prevCoords[0]},${prevCoords[1]}`;
+    }
+
+    const url = origin
+      ? `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${dest}&travelmode=walking`
+      : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(stop.title + ' ' + stop.locationName)}`;
+
+    window.open(url, '_blank');
+  };
 
   return (
-    <div className="relative h-screen w-full overflow-hidden bg-[#E8ECE9] flex flex-col">
-      {/* Top Floating App Bar (matches 12.png) */}
-      <div className="absolute top-4 left-4 right-4 z-20 flex items-center justify-between pointer-events-none">
+    <div className="relative h-screen w-full overflow-hidden bg-gray-100 flex flex-col">
+      {/* Top Floating Header */}
+      <div className="absolute top-4 left-4 right-4 z-1000 flex items-center justify-between pointer-events-none">
         <button
           onClick={goBack}
           className="w-11 h-11 rounded-full bg-white text-gray-800 shadow-md flex items-center justify-center hover:bg-gray-50 pointer-events-auto transition-transform active:scale-95 cursor-pointer border border-gray-100"
@@ -44,343 +261,219 @@ export const MapViewPage: React.FC = () => {
           <ChevronLeft size={24} />
         </button>
 
-        <div className="flex items-center gap-2 pointer-events-auto">
-          <div className="px-3.5 py-2 rounded-full bg-white/95 backdrop-blur-md shadow-md border border-gray-100 flex items-center gap-2">
-            <Compass size={16} className="text-[#005B49]" />
-            <span className="text-xs sm:text-sm font-bold text-gray-900">
-              Day 1: Varanasi Ghats
-            </span>
-          </div>
-
-          <div className="hidden sm:block">
-            <LiveLocationBar compact={true} />
-          </div>
+        {/* Day selection tabs */}
+        <div className="pointer-events-auto flex items-center bg-white/95 backdrop-blur-md p-1 rounded-full shadow-md border border-gray-100 max-w-[280px] sm:max-w-none overflow-x-auto no-scrollbar">
+          {currentTrip.days.map((day, dIdx) => (
+            <button
+              key={day.dayNumber}
+              onClick={() => {
+                setSelectedDayIndex(dIdx);
+                setSelectedStopIndex(0);
+                showToast(`Viewing Day ${day.dayNumber} Route`);
+              }}
+              className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
+                selectedDayIndex === dIdx
+                  ? 'bg-[#005B49] text-white shadow-xs'
+                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+              }`}
+            >
+              Day {day.dayNumber}
+            </button>
+          ))}
         </div>
 
-        {/* Layer toggle button */}
+        {/* Route directions toggle */}
         <button
-          onClick={() => {
-            const next = activeLayer === 'all' ? 'food' : activeLayer === 'food' ? 'culture' : 'all';
-            setActiveLayer(next);
-            showToast(`Map Filter: ${next.toUpperCase()}`);
-          }}
-          className="w-11 h-11 rounded-full bg-white text-gray-800 shadow-md flex items-center justify-center hover:bg-gray-50 pointer-events-auto transition-transform active:scale-95 cursor-pointer border border-gray-100"
-          aria-label="Toggle Map Layers"
+          onClick={() => setShowDirectionsDrawer(!showDirectionsDrawer)}
+          className={`w-11 h-11 rounded-full shadow-md flex items-center justify-center pointer-events-auto transition-transform active:scale-95 cursor-pointer border border-gray-100 ${
+            showDirectionsDrawer ? 'bg-[#005B49] text-white' : 'bg-white text-gray-800 hover:bg-gray-50'
+          }`}
+          aria-label="Toggle Route Directions"
+          title="Turn-by-turn Route Guide"
         >
-          <Layers size={18} />
+          <Route size={20} />
         </button>
       </div>
 
-      {/* Floating Map Zoom Controls on Right */}
-      <div className="absolute right-4 top-24 z-20 flex flex-col gap-2 pointer-events-auto">
+      {/* Map Action Controls (Zoom & Live GPS) */}
+      <div className="absolute right-4 top-20 z-1000 flex flex-col gap-2 pointer-events-auto">
         <button
-          onClick={() => setZoomLevel((z) => Math.min(1.5, z + 0.15))}
+          onClick={handleZoomIn}
           className="w-10 h-10 rounded-xl bg-white text-gray-800 shadow-md flex items-center justify-center hover:bg-gray-50 active:scale-95 border border-gray-100 cursor-pointer"
-          aria-label="Zoom in"
+          aria-label="Zoom In"
         >
           <ZoomIn size={18} />
         </button>
         <button
-          onClick={() => setZoomLevel((z) => Math.max(0.85, z - 0.15))}
+          onClick={handleZoomOut}
           className="w-10 h-10 rounded-xl bg-white text-gray-800 shadow-md flex items-center justify-center hover:bg-gray-50 active:scale-95 border border-gray-100 cursor-pointer"
-          aria-label="Zoom out"
+          aria-label="Zoom Out"
         >
           <ZoomOut size={18} />
         </button>
         <button
-          onClick={async () => {
-            setZoomLevel(1);
-            await fetchLiveLocation();
-          }}
+          onClick={handleRecenter}
           className={`w-10 h-10 rounded-xl bg-white text-[#005B49] shadow-md flex items-center justify-center hover:bg-gray-50 active:scale-95 border border-gray-100 cursor-pointer ${
-            isLocating ? 'animate-spin text-emerald-600' : ''
+            isLocating ? 'animate-pulse text-emerald-600' : ''
           }`}
-          title="Detect live GPS position"
-          aria-label="Current location"
+          title="Center on Live GPS position"
+          aria-label="Current Location"
         >
-          <Navigation size={18} className={isLocating ? '' : 'fill-[#005B49]'} />
+          <Navigation size={18} className={currentLocation ? 'fill-[#005B49]' : ''} />
         </button>
       </div>
 
-      {/* Interactive Map Visualizer Canvas */}
-      <div className="flex-1 w-full h-full relative overflow-hidden flex items-center justify-center">
-        <div
-          className="w-full h-full max-w-4xl max-h-[800px] transition-transform duration-300 relative select-none"
-          style={{ transform: `scale(${zoomLevel})` }}
-        >
-          <svg
-            viewBox="0 0 600 600"
-            className="w-full h-full drop-shadow-sm"
-            preserveAspectRatio="xMidYMid slice"
-          >
-            {/* Background land tone */}
-            <rect width="600" height="600" fill="#EBF0EC" />
+      {/* Free Leaflet OpenStreetMap Container */}
+      <div id="leaflet-map-canvas" ref={mapContainerRef} className="flex-1 w-full h-full z-0" />
 
-            {/* City road grids */}
-            <g stroke="#DCE3DD" strokeWidth="6" strokeLinecap="round">
-              <line x1="80" y1="120" x2="420" y2="120" />
-              <line x1="120" y1="40" x2="120" y2="520" />
-              <line x1="200" y1="80" x2="200" y2="560" />
-              <line x1="50" y1="240" x2="360" y2="240" />
-              <line x1="60" y1="360" x2="300" y2="360" />
-              <line x1="70" y1="460" x2="280" y2="460" />
-            </g>
-
-            {/* Ganga River (Curving along the east side of Varanasi) */}
-            <path
-              d="M 280 0 C 320 150, 240 320, 180 600 L 600 600 L 600 0 Z"
-              fill="#CFE6F2"
-            />
-            {/* Water flow wave accents */}
-            <path
-              d="M 320 80 Q 340 120 330 180"
-              stroke="#A8D5EA"
-              strokeWidth="3"
-              fill="none"
-              strokeDasharray="4 4"
-            />
-            <path
-              d="M 270 260 Q 280 320 250 380"
-              stroke="#A8D5EA"
-              strokeWidth="3"
-              fill="none"
-              strokeDasharray="4 4"
-            />
-            <path
-              d="M 220 440 Q 230 480 200 540"
-              stroke="#A8D5EA"
-              strokeWidth="3"
-              fill="none"
-              strokeDasharray="4 4"
-            />
-
-            {/* River label */}
-            <text
-              x="420"
-              y="280"
-              fill="#528AA5"
-              fontSize="16"
-              fontWeight="bold"
-              letterSpacing="3"
-              transform="rotate(65, 420, 280)"
+      {/* Route Directions Drawer / Overlay */}
+      {showDirectionsDrawer && (
+        <div className="absolute inset-x-4 top-20 bottom-36 sm:bottom-28 z-1000 max-w-md mx-auto bg-white/95 backdrop-blur-md rounded-3xl shadow-2xl border border-gray-200 p-5 flex flex-col overflow-hidden animate-in fade-in duration-200">
+          <div className="flex items-center justify-between border-b border-gray-100 pb-3 mb-3">
+            <div className="flex items-center gap-2">
+              <Route size={18} className="text-[#005B49]" />
+              <h3 className="font-extrabold text-sm sm:text-base text-gray-900">
+                Day {activeDay.dayNumber} Turn-by-Turn Route
+              </h3>
+            </div>
+            <button
+              onClick={() => setShowDirectionsDrawer(false)}
+              className="text-xs font-bold text-gray-500 hover:text-gray-900 px-2 py-1 rounded-lg hover:bg-gray-100"
             >
-              GANGES RIVER
-            </text>
+              Close
+            </button>
+          </div>
 
-            {/* Dotted Itinerary Walking Trail connecting Stop 1 -> 2 -> 3 -> 4 */}
-            <path
-              d="M 220 380 L 310 270 L 380 220 L 290 320"
-              stroke="#005B49"
-              strokeWidth="4"
-              strokeDasharray="6 6"
-              strokeLinecap="round"
-              fill="none"
-            />
+          <p className="text-xs text-gray-500 mb-3">
+            Sequence of destinations from Stop 1 to Stop {stops.length}. Follow this planned flow:
+          </p>
 
-            {/* Map Markers for Itinerary Stops */}
-            {mapMarkers.map((marker) => {
-              const isSelected = selectedStopIndex === marker.stopIndex;
+          <div className="flex-1 overflow-y-auto space-y-3 pr-1">
+            {stops.map((stop, idx) => {
+              const isLast = idx === stops.length - 1;
+              const nextStop = stops[idx + 1];
               return (
-                <g
-                  key={marker.id}
-                  onClick={() => setSelectedStopIndex(marker.stopIndex)}
-                  className="cursor-pointer group"
-                >
-                  {/* Radar pulse for selected pin */}
-                  {isSelected && (
-                    <circle
-                      cx={marker.x}
-                      cy={marker.y}
-                      r="22"
-                      fill="#005B49"
-                      fillOpacity="0.25"
-                      className="animate-ping"
-                    />
+                <div key={stop.id} className="relative">
+                  <div
+                    onClick={() => {
+                      setSelectedStopIndex(idx);
+                      setShowDirectionsDrawer(false);
+                    }}
+                    className={`p-3 rounded-2xl border transition-all cursor-pointer ${
+                      selectedStopIndex === idx
+                        ? 'bg-emerald-50 border-emerald-300'
+                        : 'bg-white border-gray-100 hover:border-gray-200'
+                    }`}
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="w-7 h-7 rounded-full bg-[#005B49] text-white flex items-center justify-center text-xs font-extrabold shrink-0 mt-0.5">
+                        {idx + 1}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-emerald-800">{stop.time}</span>
+                          <span className="text-xs font-semibold text-gray-500">{stop.duration}</span>
+                        </div>
+                        <h4 className="font-bold text-sm text-gray-900 truncate">{stop.title}</h4>
+                        <p className="text-xs text-gray-500 truncate">{stop.locationName}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {!isLast && nextStop && (
+                    <div className="my-1.5 ml-3.5 pl-6 border-l-2 border-dashed border-emerald-300 flex items-center gap-2 py-1 text-[11px] text-gray-500 font-medium">
+                      <span>Travel to Stop {idx + 2}</span>
+                      <ArrowRight size={12} className="text-emerald-700" />
+                      <span className="text-gray-700 font-bold">{nextStop.locationName}</span>
+                    </div>
                   )}
-
-                  {/* Pin Body */}
-                  <circle
-                    cx={marker.x}
-                    cy={marker.y}
-                    r={isSelected ? '16' : '13'}
-                    fill={isSelected ? '#005B49' : '#F59E0B'}
-                    stroke="#FFFFFF"
-                    strokeWidth="3"
-                    className="transition-all duration-200"
-                  />
-
-                  {/* Pin Number */}
-                  <text
-                    x={marker.x}
-                    y={marker.y + 4}
-                    textAnchor="middle"
-                    fill="#FFFFFF"
-                    fontSize={isSelected ? '12' : '10'}
-                    fontWeight="bold"
-                  >
-                    {marker.label}
-                  </text>
-
-                  {/* Marker Callout Label */}
-                  <rect
-                    x={marker.x + 18}
-                    y={marker.y - 12}
-                    width={marker.name.length * 7.5 + 16}
-                    height="24"
-                    rx="12"
-                    fill="#FFFFFF"
-                    stroke="#E5E7EB"
-                    strokeWidth="1"
-                    filter="drop-shadow(0 1px 2px rgba(0,0,0,0.1))"
-                  />
-                  <text
-                    x={marker.x + 26}
-                    y={marker.y + 4}
-                    fill="#1F2937"
-                    fontSize="11"
-                    fontWeight="bold"
-                  >
-                    {marker.name}
-                  </text>
-                </g>
+                </div>
               );
             })}
+          </div>
 
-            {/* Live User Location GPS Pulse Pin */}
-            {(() => {
-              const userX = Math.max(
-                80,
-                Math.min(
-                  520,
-                  Math.round(
-                    ((currentLocation.coordinates.lng - 82.97) / (83.04 - 82.97)) * 440 + 80
-                  )
-                )
-              );
-              const userY = Math.max(
-                80,
-                Math.min(
-                  520,
-                  Math.round(
-                    (1 - (currentLocation.coordinates.lat - 25.27) / (25.35 - 25.27)) * 440 + 80
-                  )
-                )
-              );
-
-              return (
-                <g className="transition-all duration-500">
-                  <circle
-                    cx={userX}
-                    cy={userY}
-                    r="20"
-                    fill="#0284C7"
-                    fillOpacity="0.25"
-                    className="animate-ping"
-                  />
-                  <circle
-                    cx={userX}
-                    cy={userY}
-                    r="9"
-                    fill="#0284C7"
-                    stroke="#FFFFFF"
-                    strokeWidth="3"
-                  />
-                  <circle cx={userX} cy={userY} r="3" fill="#FFFFFF" />
-
-                  {/* Badge */}
-                  <rect
-                    x={userX - 60}
-                    y={userY - 28}
-                    width="120"
-                    height="20"
-                    rx="10"
-                    fill="#0F172A"
-                    fillOpacity="0.9"
-                  />
-                  <text
-                    x={userX}
-                    y={userY - 14}
-                    textAnchor="middle"
-                    fill="#38BDF8"
-                    fontSize="9"
-                    fontWeight="bold"
-                  >
-                    ● You are here
-                  </text>
-                </g>
-              );
-            })()}
-          </svg>
+          <div className="mt-3 pt-3 border-t border-gray-100 flex items-center justify-between text-xs">
+            <span className="font-semibold text-gray-600">Total Stops: {stops.length}</span>
+            <span className="font-bold text-emerald-800">Free OpenStreetMap Engine</span>
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* Bottom Selected Stop Carousel Card (matches 12.png) */}
-      <div className="absolute bottom-6 left-4 right-4 z-30 max-w-lg mx-auto">
-        <div className="p-4 rounded-3xl bg-white shadow-xl border border-gray-100 flex flex-col gap-3 animate-in slide-in-from-bottom-3">
-          {/* Top meta row */}
-          <div className="flex items-center justify-between">
+      {/* Bottom Stop Carousel & Directions Card (matches user request 3) */}
+      <div className="absolute bottom-4 left-4 right-4 z-1000 max-w-xl mx-auto pointer-events-none">
+        <div className="bg-white/95 backdrop-blur-md rounded-3xl shadow-xl border border-gray-200/90 p-4 pointer-events-auto">
+          {/* Day & Stops Summary Header */}
+          <div className="flex items-center justify-between mb-3 pb-2 border-b border-gray-100">
             <div className="flex items-center gap-2">
               <span className="w-6 h-6 rounded-full bg-[#005B49] text-white flex items-center justify-center text-xs font-bold">
                 {selectedStopIndex + 1}
               </span>
-              <span className="text-xs font-semibold text-[#005B49] flex items-center gap-1">
-                <Clock size={12} />
-                {currentStop.time} ({currentStop.duration})
+              <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">
+                Stop {selectedStopIndex + 1} of {stops.length}
               </span>
             </div>
 
-            {/* Prev/Next stop toggles */}
-            <div className="flex items-center gap-1">
-              <button
-                disabled={selectedStopIndex === 0}
-                onClick={() => setSelectedStopIndex((i) => Math.max(0, i - 1))}
-                className="w-7 h-7 rounded-lg border border-gray-200 flex items-center justify-center text-gray-600 disabled:opacity-30 cursor-pointer"
-              >
-                ‹
-              </button>
-              <button
-                disabled={selectedStopIndex === stops.length - 1}
-                onClick={() => setSelectedStopIndex((i) => Math.min(stops.length - 1, i + 1))}
-                className="w-7 h-7 rounded-lg border border-gray-200 flex items-center justify-center text-gray-600 disabled:opacity-30 cursor-pointer"
-              >
-                ›
-              </button>
+            <div className="flex items-center gap-1 text-xs text-gray-600">
+              <Clock size={13} className="text-gray-400" />
+              <span className="font-bold">{currentStop?.time || 'Scheduled'}</span>
             </div>
           </div>
 
-          {/* Place Title & Description */}
-          <div>
-            <h3 className="text-base sm:text-lg font-bold text-gray-900">
-              {currentStop.name}
-            </h3>
-            <p className="text-xs text-gray-600 mt-0.5 line-clamp-2">
-              {currentStop.description}
-            </p>
-          </div>
+          {/* Current Stop Details */}
+          {currentStop && (
+            <div className="flex items-center gap-3">
+              <img
+                src={currentStop.imageUrl}
+                alt={currentStop.title}
+                className="w-16 h-16 rounded-2xl object-cover shrink-0 shadow-2xs"
+              />
 
-          {/* Action buttons */}
-          <div className="flex items-center gap-2 pt-1">
+              <div className="flex-1 min-w-0">
+                <h4 className="font-extrabold text-sm sm:text-base text-gray-950 truncate">
+                  {currentStop.title}
+                </h4>
+                <p className="text-xs text-gray-500 truncate flex items-center gap-1 mt-0.5">
+                  <MapPin size={12} className="shrink-0 text-gray-400" />
+                  <span>{currentStop.locationName}</span>
+                </p>
+                <div className="flex items-center gap-2 mt-1.5">
+                  <span className="px-2 py-0.5 rounded-full bg-emerald-100/70 text-[#005B49] text-[11px] font-bold">
+                    {currentStop.categoryLabel}
+                  </span>
+                  <span className="text-xs font-semibold text-gray-600">
+                    Est. {currentStop.costEstimate || currentStop.priceLevel || 'Free'}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Stop Stepper Navigation & External Turn-by-Turn GPS Button */}
+          <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gray-100">
             <button
-              onClick={() => {
-                if (currentStop.placeId === 'shiv-handloom-studio') {
-                  navigate(`/business/${currentStop.placeId}`);
-                } else if (currentStop.placeId) {
-                  navigate(`/place/${currentStop.placeId}`);
-                } else {
-                  showToast(`Viewing details for ${currentStop.name}`);
-                }
-              }}
-              className="flex-1 py-2.5 px-3 rounded-xl bg-[#005B49] text-white text-xs font-bold flex items-center justify-center gap-1.5 hover:bg-[#004739] cursor-pointer"
+              onClick={() => setSelectedStopIndex((prev) => Math.max(0, prev - 1))}
+              disabled={selectedStopIndex === 0}
+              className="px-3 py-2 rounded-xl text-xs font-bold border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
             >
-              <span>View Stop Details</span>
-              <ChevronRight size={14} />
+              Prev
             </button>
+
             <button
-              onClick={() => showToast(`Starting live GPS walking directions to ${currentStop.name}`)}
-              className="py-2.5 px-4 rounded-xl border border-gray-200 text-gray-700 text-xs font-bold flex items-center justify-center gap-1.5 hover:bg-gray-50 cursor-pointer"
+              id="map-external-directions-btn"
+              onClick={() => openExternalDirections(currentStop, selectedStopIndex)}
+              className="flex-1 py-2.5 px-3 rounded-xl bg-[#005B49] hover:bg-[#004739] text-white text-xs sm:text-sm font-bold flex items-center justify-center gap-1.5 shadow-md active:scale-98 transition-all cursor-pointer"
             >
-              <Navigation size={13} className="text-[#005B49]" />
-              <span>Directions</span>
+              <Navigation size={14} />
+              <span>Get Directions</span>
+              <ExternalLink size={12} className="opacity-80" />
+            </button>
+
+            <button
+              onClick={() => setSelectedStopIndex((prev) => Math.min(stops.length - 1, prev + 1))}
+              disabled={selectedStopIndex === stops.length - 1}
+              className="px-3 py-2 rounded-xl text-xs font-bold border border-gray-200 text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+            >
+              Next
             </button>
           </div>
         </div>
