@@ -160,6 +160,8 @@ export interface UserProfile {
   location: string;
   homeCity?: string;
   bio: string;
+  createdAt?: string;
+  joinedDate?: string;
   tripsCount: number;
   savedCount: number;
   reviewsCount: number;

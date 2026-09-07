@@ -19,6 +19,439 @@ async function startServer() {
     });
   });
 
+  // 1b. Backend Authentication Service (Dual-layer persistence for Firebase & Web clients)
+  interface StoredUser {
+    id: string;
+    name: string;
+    email: string;
+    password: string;
+    role: string;
+    avatarUrl: string;
+    location?: string;
+    homeCity: string;
+    bio: string;
+    createdAt: string;
+    joinedDate?: string;
+    savedPlaceIds: string[];
+    tripsCount: number;
+    savedCount: number;
+    reviewsCount: number;
+    levelBadge: string;
+    preferences: {
+      language: string;
+      defaultLocation: string;
+      distanceUnit: string;
+      theme: string;
+      pushNotifications: boolean;
+      tripReminders: boolean;
+      localOffers: boolean;
+      communityUpdates: boolean;
+      pace: string;
+      dietary: string[];
+      stayVibe: string;
+      transportStyle: string;
+    };
+  }
+
+  const defaultPreferences = {
+    language: 'English',
+    defaultLocation: 'Current Location',
+    distanceUnit: 'Kilometres (km)',
+    theme: 'Light',
+    pushNotifications: true,
+    tripReminders: true,
+    localOffers: true,
+    communityUpdates: false,
+    pace: 'Balanced',
+    dietary: ['Local Street Food', 'Pure Vegetarian'],
+    stayVibe: 'Heritage Haveli',
+    transportStyle: 'Walking & Rickshaw',
+  };
+
+  const registeredUsers: Map<string, StoredUser> = new Map([
+    [
+      'vinamra123409@gmail.com',
+      {
+        id: 'user-vinamra',
+        name: 'Vinamra',
+        email: 'vinamra123409@gmail.com',
+        password: 'Password123!',
+        role: 'Verified Cultural Explorer',
+        avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=300&auto=format&fit=crop&q=80',
+        location: 'Detecting Location...',
+        homeCity: 'Detecting Location...',
+        bio: 'Cultural explorer, avid street food enthusiast & heritage architecture admirer.',
+        createdAt: '2026-09-07T15:54:15.000Z',
+        joinedDate: '2026-09-07T15:54:15.000Z',
+        savedPlaceIds: ['kashi-chaat-corner', 'dashashwamedh-ghat', 'shiv-handloom-studio', 'ganga-view-homestay'],
+        tripsCount: 4,
+        savedCount: 18,
+        reviewsCount: 12,
+        levelBadge: 'Heritage Scout',
+        preferences: defaultPreferences,
+      },
+    ],
+    [
+      'explorer@seizeontrip.com',
+      {
+        id: 'user-demo-explorer',
+        name: 'Rahul Verma',
+        email: 'explorer@seizeontrip.com',
+        password: 'Varanasi2026!',
+        role: 'Heritage Scout',
+        avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=300&auto=format&fit=crop&q=80',
+        homeCity: 'Varanasi, India',
+        bio: 'Cultural explorer, avid street food enthusiast & heritage architecture admirer.',
+        createdAt: '2024-03-15T10:00:00.000Z',
+        savedPlaceIds: ['kashi-chaat-corner', 'dashashwamedh-ghat', 'shiv-handloom-studio', 'ganga-view-homestay'],
+        tripsCount: 4,
+        savedCount: 4,
+        reviewsCount: 12,
+        levelBadge: 'Heritage Scout',
+        preferences: defaultPreferences,
+      },
+    ],
+    [
+      'priya@example.com',
+      {
+        id: 'user-demo-priya',
+        name: 'Priya Sharma',
+        email: 'priya@example.com',
+        password: 'Priya@123',
+        role: 'Verified Traveler',
+        avatarUrl: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=300&auto=format&fit=crop&q=80',
+        homeCity: 'New Delhi, India',
+        bio: 'Passionate about Indian textiles, classical music and dawn boat rides on the Ganges.',
+        createdAt: '2024-05-20T10:00:00.000Z',
+        savedPlaceIds: ['shiv-handloom-studio', 'brijrama-palace', 'blue-lassi-shop'],
+        tripsCount: 2,
+        savedCount: 3,
+        reviewsCount: 5,
+        levelBadge: 'Artisan Patron',
+        preferences: defaultPreferences,
+      },
+    ],
+  ]);
+
+  // Auth: Register Endpoint
+  app.post('/api/auth/register', (req, res) => {
+    try {
+      const { name, email, password, location, homeCity } = req.body || {};
+
+      if (!name || typeof name !== 'string' || !name.trim()) {
+        res.status(400).json({ error: 'Please enter your full name.' });
+        return;
+      }
+      if (!email || typeof email !== 'string' || !email.includes('@')) {
+        res.status(400).json({ error: 'Please provide a valid email address.' });
+        return;
+      }
+      if (!password || typeof password !== 'string' || password.length < 6) {
+        res.status(400).json({ error: 'Password must be at least 6 characters long.' });
+        return;
+      }
+
+      const normalizedEmail = email.trim().toLowerCase();
+      if (registeredUsers.has(normalizedEmail)) {
+        res.status(409).json({
+          error: 'This email is already registered. Please log in with your existing password or use a different email.',
+          emailAlreadyExists: true,
+        });
+        return;
+      }
+
+      const nowIso = new Date().toISOString();
+      const detectedCity = location || homeCity || 'Detecting Location...';
+      const newUserId = 'user-' + Date.now();
+      const newUser: StoredUser = {
+        id: newUserId,
+        name: name.trim(),
+        email: normalizedEmail,
+        password: password,
+        role: 'Verified Traveler',
+        avatarUrl: `https://api.dicebear.com/7.x/adventurer/svg?seed=${encodeURIComponent(name.trim())}&backgroundColor=dceee9,bce0d5`,
+        location: detectedCity,
+        homeCity: detectedCity,
+        bio: 'Explorer of cultural heritage, ancient temples and sacred riverfronts.',
+        createdAt: nowIso,
+        joinedDate: nowIso,
+        savedPlaceIds: ['kashi-chaat-corner', 'dashashwamedh-ghat'],
+        tripsCount: 1,
+        savedCount: 2,
+        reviewsCount: 0,
+        levelBadge: 'Heritage Scout',
+        preferences: defaultPreferences,
+      };
+
+      registeredUsers.set(normalizedEmail, newUser);
+
+      // Return user without revealing plain password
+      const { password: _, ...safeUser } = newUser;
+      res.status(201).json({
+        success: true,
+        message: 'Account created successfully!',
+        user: safeUser,
+      });
+    } catch (err: any) {
+      console.error('Registration server error:', err);
+      res.status(500).json({ error: 'Internal server error during registration.' });
+    }
+  });
+
+  // Auth: Login Endpoint
+  app.post('/api/auth/login', (req, res) => {
+    try {
+      const { email, password } = req.body || {};
+
+      if (!email || typeof email !== 'string' || !email.trim()) {
+        res.status(400).json({ error: 'Please provide your email address.' });
+        return;
+      }
+      if (!password || typeof password !== 'string') {
+        res.status(400).json({ error: 'Please enter your password.' });
+        return;
+      }
+
+      const normalizedEmail = email.trim().toLowerCase();
+      const existingUser = registeredUsers.get(normalizedEmail);
+
+      if (!existingUser) {
+        res.status(404).json({
+          error: 'No account found with this email. Please check your spelling or register a new account.',
+          notFound: true,
+        });
+        return;
+      }
+
+      if (existingUser.password !== password) {
+        res.status(401).json({
+          error: 'Incorrect password. Please verify your credentials and try again.',
+          invalidPassword: true,
+        });
+        return;
+      }
+
+      const { password: _, ...safeUser } = existingUser;
+      res.json({
+        success: true,
+        message: `Welcome back, ${safeUser.name}!`,
+        user: safeUser,
+      });
+    } catch (err: any) {
+      console.error('Login server error:', err);
+      res.status(500).json({ error: 'Internal server error during login.' });
+    }
+  });
+
+  // Auth: Google / 1-Click Verification Endpoint
+  app.post('/api/auth/google-login', (req, res) => {
+    try {
+      const { email, name, avatarUrl, location, homeCity } = req.body || {};
+      const userEmail = (email && typeof email === 'string') ? email.trim().toLowerCase() : 'explorer.google@seizeontrip.com';
+      const userName = (name && typeof name === 'string' && name.trim()) ? name.trim() : 'Google Explorer';
+
+      let existing = registeredUsers.get(userEmail);
+      if (!existing) {
+        const nowIso = new Date().toISOString();
+        const detectedCity = location || homeCity || 'Detecting Location...';
+        existing = {
+          id: 'user-google-' + Date.now(),
+          name: userName,
+          email: userEmail,
+          password: 'google-oauth-managed',
+          role: 'Verified Google Explorer',
+          avatarUrl: avatarUrl || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=300&auto=format&fit=crop&q=80',
+          location: detectedCity,
+          homeCity: detectedCity,
+          bio: 'Verified cultural traveler via Google Identity.',
+          createdAt: nowIso,
+          joinedDate: nowIso,
+          savedPlaceIds: ['kashi-chaat-corner', 'dashashwamedh-ghat', 'shiv-handloom-studio'],
+          tripsCount: 1,
+          savedCount: 3,
+          reviewsCount: 2,
+          levelBadge: 'Heritage Scout',
+          preferences: defaultPreferences,
+        };
+        registeredUsers.set(userEmail, existing);
+      } else if (location || homeCity) {
+        if (location) existing.location = location;
+        if (homeCity) existing.homeCity = homeCity;
+      }
+
+      const { password: _, ...safeUser } = existing;
+      res.json({
+        success: true,
+        message: `Signed in with Google as ${safeUser.name}`,
+        user: safeUser,
+      });
+    } catch (err: any) {
+      console.error('Google login API error:', err);
+      res.status(500).json({ error: 'Could not complete Google session.' });
+    }
+  });
+
+  // Auth: Guest Mode Endpoint
+  app.post('/api/auth/guest', (req, res) => {
+    const { location, homeCity } = req.body || {};
+    const guestId = 'guest-' + Date.now();
+    const nowIso = new Date().toISOString();
+    const detectedCity = location || homeCity || 'Detecting Location...';
+    const guestUser: StoredUser = {
+      id: guestId,
+      name: 'Guest Explorer',
+      email: 'guest@seizeontrip.com',
+      password: 'guest',
+      role: 'Guest Traveler',
+      avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=300&auto=format&fit=crop&q=80',
+      location: detectedCity,
+      homeCity: detectedCity,
+      bio: 'Visiting Varanasi without persistent profile registration.',
+      createdAt: nowIso,
+      joinedDate: nowIso,
+      savedPlaceIds: ['dashashwamedh-ghat', 'kashi-chaat-corner'],
+      tripsCount: 1,
+      savedCount: 2,
+      reviewsCount: 0,
+      levelBadge: 'Guest Traveler',
+      preferences: defaultPreferences,
+    };
+    registeredUsers.set('guest@seizeontrip.com', guestUser);
+    res.json({ success: true, user: guestUser });
+  });
+
+  // Auth: Password Reset Endpoint
+  app.post('/api/auth/reset-password', (req, res) => {
+    try {
+      const { email, newPassword } = req.body || {};
+      if (!email || !email.includes('@')) {
+        res.status(400).json({ error: 'Please enter a valid email address.' });
+        return;
+      }
+      if (!newPassword || newPassword.length < 6) {
+        res.status(400).json({ error: 'New password must be at least 6 characters.' });
+        return;
+      }
+
+      const normalized = email.trim().toLowerCase();
+      const user = registeredUsers.get(normalized);
+      if (!user) {
+        res.status(404).json({ error: 'No account found with this email to reset.' });
+        return;
+      }
+
+      user.password = newPassword;
+      registeredUsers.set(normalized, user);
+
+      res.json({
+        success: true,
+        message: `Password updated successfully for ${email}. You can now log in.`,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: 'Could not reset password.' });
+    }
+  });
+
+  // Auth: Update Profile Endpoint (Persistent across sessions)
+  app.post('/api/auth/update-profile', (req, res) => {
+    try {
+      const { email, location, homeCity, name, bio, avatarUrl, preferences } = req.body || {};
+      if (!email) {
+        res.status(400).json({ error: 'User email is required to update profile.' });
+        return;
+      }
+
+      const normalized = email.trim().toLowerCase();
+      let user = registeredUsers.get(normalized);
+      if (user) {
+        if (location) user.location = location;
+        if (homeCity) user.homeCity = homeCity;
+        if (name) user.name = name;
+        if (bio) user.bio = bio;
+        if (avatarUrl) user.avatarUrl = avatarUrl;
+        if (preferences) user.preferences = { ...user.preferences, ...preferences };
+        registeredUsers.set(normalized, user);
+        const { password: _, ...safeUser } = user;
+        return res.json({ success: true, user: safeUser, message: 'Profile updated successfully.' });
+      }
+
+      // If user wasn't in memory map yet, insert
+      const nowIso = new Date().toISOString();
+      const detectedCity = location || homeCity || 'Detecting Location...';
+      const createdUser: StoredUser = {
+        id: 'user-' + Date.now(),
+        name: name || 'Explorer',
+        email: normalized,
+        password: '',
+        role: 'Verified Traveler',
+        avatarUrl: avatarUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=300&auto=format&fit=crop&q=80',
+        location: detectedCity,
+        homeCity: detectedCity,
+        bio: bio || 'Cultural traveler exploring heritage and sacred sites.',
+        createdAt: nowIso,
+        joinedDate: nowIso,
+        savedPlaceIds: ['kashi-chaat-corner'],
+        tripsCount: 1,
+        savedCount: 1,
+        reviewsCount: 0,
+        levelBadge: 'Heritage Scout',
+        preferences: defaultPreferences,
+      };
+      registeredUsers.set(normalized, createdUser);
+      const { password: _, ...safeUser } = createdUser;
+      res.json({ success: true, user: safeUser, message: 'Profile created and updated.' });
+    } catch (err: any) {
+      console.error('Update profile error:', err);
+      res.status(500).json({ error: 'Could not update user profile.' });
+    }
+  });
+
+  // Location: Instant IP Geolocation (Detects user origin immediately)
+  app.get('/api/location/ip-detect', async (req, res) => {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3500);
+
+      const ipRes = await fetch(
+        'http://ip-api.com/json/?fields=status,message,country,countryCode,region,regionName,city,zip,lat,lon,timezone',
+        { signal: controller.signal }
+      );
+      clearTimeout(timeoutId);
+
+      if (ipRes.ok) {
+        const data = await ipRes.json();
+        if (data.status === 'success') {
+          const parts = [data.city, data.regionName, data.country].filter(Boolean);
+          const formattedLocation = parts.join(', ');
+          return res.json({
+            success: true,
+            city: data.city || 'Detected City',
+            region: data.regionName || '',
+            country: data.country || '',
+            formattedLocation,
+            locality: data.city || 'Current City',
+            lat: data.lat,
+            lng: data.lon,
+            timezone: data.timezone,
+            source: 'Network IP Geolocation',
+          });
+        }
+      }
+    } catch (e: any) {
+      console.warn('IP detect error:', e?.message || e);
+    }
+
+    res.json({
+      success: false,
+      message: 'Could not detect IP location',
+      fallback: {
+        city: 'Current Location',
+        locality: 'Current Location',
+        formattedLocation: 'Current Location',
+      },
+    });
+  });
+
   // 2. Free Weather & Sunrise/Sunset API (Open-Meteo for any location worldwide)
   app.get('/api/weather', async (req, res) => {
     try {

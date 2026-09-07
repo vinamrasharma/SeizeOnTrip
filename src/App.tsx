@@ -28,13 +28,11 @@ const AppRouter: React.FC = () => {
       return <OnboardingPage />;
     }
 
-    // 2. Auth - redirect to home if already authenticated
+    // 2. Auth
     if (currentRoute === '/login') {
-      if (isAuthenticated) return <HomePage />;
       return <LoginPage />;
     }
     if (currentRoute === '/signup') {
-      if (isAuthenticated) return <HomePage />;
       return <SignUpPage />;
     }
 

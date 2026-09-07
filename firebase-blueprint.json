@@ -10,9 +10,11 @@
         "email": { "type": "string", "maxLength": 150 },
         "role": { "type": "string" },
         "avatarUrl": { "type": "string" },
+        "location": { "type": "string", "maxLength": 150 },
         "homeCity": { "type": "string", "maxLength": 100 },
         "bio": { "type": "string", "maxLength": 500 },
-        "createdAt": { "type": "string" }
+        "createdAt": { "type": "string" },
+        "joinedDate": { "type": "string" }
       },
       "required": ["id", "name", "email"]
     },

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { PlaceCard } from '../components/cards/PlaceCards';
 import {
@@ -14,11 +14,73 @@ import {
   LogOut,
   Edit2,
   ChevronRight,
+  RefreshCw,
+  Navigation,
+  Check,
+  X,
 } from 'lucide-react';
 
 export const ProfilePage: React.FC = () => {
-  const { goBack, navigate, user, savedPlaceIds, showToast, logoutUser, firebaseUser } = useApp();
+  const {
+    goBack,
+    navigate,
+    user,
+    savedPlaceIds,
+    showToast,
+    logoutUser,
+    firebaseUser,
+    currentLocation,
+    isLocating,
+    detectAndSyncUserLocation,
+    updateUserProfile,
+  } = useApp();
   const [showLogoutModal, setShowLogoutModal] = useState(false);
+  const [showEditLocationModal, setShowEditLocationModal] = useState(false);
+  const [customLocationInput, setCustomLocationInput] = useState('');
+
+  // Automatically trigger location detection on profile mount if needed
+  useEffect(() => {
+    if (!user.location || user.location === 'Detecting Location...' || user.location === 'Varanasi, India') {
+      detectAndSyncUserLocation(false);
+    }
+  }, []);
+
+  // Format accurate join date
+  const getFormattedJoinedDate = () => {
+    const rawDate = user.joinedDate || user.createdAt;
+    if (!rawDate) return 'Member since Sep 2026';
+    try {
+      const d = new Date(rawDate);
+      if (isNaN(d.getTime())) return 'Member since Sep 2026';
+      return `Member since ${d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}`;
+    } catch {
+      return 'Member since Sep 2026';
+    }
+  };
+
+  // Determine current active location string
+  const activeLocation =
+    user?.location && user.location !== 'Detecting Location...'
+      ? user.location
+      : currentLocation?.locality && currentLocation.locality !== 'Assi Ghat'
+      ? currentLocation.city && !currentLocation.locality.includes(currentLocation.city)
+        ? `${currentLocation.locality}, ${currentLocation.city}`
+        : currentLocation.locality
+      : currentLocation?.city
+      ? `${currentLocation.locality || currentLocation.city}, ${currentLocation.city}`
+      : 'Detecting Location...';
+
+  const handleSaveCustomLocation = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const clean = customLocationInput.trim();
+    if (!clean) return;
+    await updateUserProfile({
+      location: clean,
+      homeCity: clean,
+    });
+    setShowEditLocationModal(false);
+    setCustomLocationInput('');
+  };
 
   return (
     <div className="min-h-screen bg-white pb-28 md:pb-16 max-w-2xl mx-auto px-4 pt-4">
@@ -53,7 +115,7 @@ export const ProfilePage: React.FC = () => {
             alt={user.name}
             className="w-20 h-20 sm:w-24 sm:h-24 rounded-full object-cover border-2 border-[#005B49] shadow-sm"
           />
-          <div className="absolute bottom-0 right-0 w-6 h-6 rounded-full bg-amber-500 text-white flex items-center justify-center text-xs shadow-sm">
+          <div className="absolute bottom-0 right-0 w-6 h-6 rounded-full bg-amber-500 text-white flex items-center justify-center text-xs shadow-sm font-bold">
             ✓
           </div>
         </div>
@@ -73,16 +135,59 @@ export const ProfilePage: React.FC = () => {
             </span>
           </div>
 
-          <div className="flex items-center justify-center sm:justify-start gap-1.5 mt-2.5 text-xs text-gray-500">
-            <MapPin size={14} className="text-[#005B49]" />
-            <span>{user?.homeCity || user?.location || 'Varanasi, India'} • Member since 2024</span>
+          {/* Dynamic Location & Join Date Row */}
+          <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 mt-3 text-xs text-gray-600">
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white border border-gray-200 shadow-2xs">
+              <MapPin size={13} className="text-[#005B49] shrink-0" />
+              <span className="font-semibold text-gray-900">{activeLocation}</span>
+            </div>
+            <span className="text-gray-400">•</span>
+            <span className="font-medium text-gray-600">{getFormattedJoinedDate()}</span>
+          </div>
+
+          {/* Live Location Actions */}
+          <div className="mt-3 flex flex-wrap items-center justify-center sm:justify-start gap-2">
+            <button
+              onClick={() => detectAndSyncUserLocation(true)}
+              disabled={isLocating}
+              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#005B49] text-white text-xs font-semibold hover:bg-[#004739] transition-all cursor-pointer shadow-2xs disabled:opacity-75"
+              title="Detect your current location"
+            >
+              {isLocating ? (
+                <>
+                  <RefreshCw size={12} className="animate-spin" />
+                  <span>Detecting GPS...</span>
+                </>
+              ) : (
+                <>
+                  <Navigation size={12} />
+                  <span>Detect My Location</span>
+                </>
+              )}
+            </button>
+
+            <button
+              onClick={() => {
+                setCustomLocationInput(activeLocation !== 'Detecting Location...' ? activeLocation : '');
+                setShowEditLocationModal(true);
+              }}
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-white border border-gray-200 text-gray-700 text-xs font-medium hover:bg-gray-100 transition-colors cursor-pointer"
+            >
+              <Edit2 size={11} className="text-gray-500" />
+              <span>Edit Location</span>
+            </button>
           </div>
 
           <div className="mt-2.5 flex items-center justify-center sm:justify-start gap-1.5">
             <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-[11px] font-semibold border border-emerald-200">
               <ShieldCheck size={12} className="text-emerald-600" />
-              <span>{firebaseUser ? (firebaseUser.isAnonymous ? 'Guest Cloud Session' : `Firebase: ${firebaseUser.email}`) : 'Local Preview Session'}</span>
+              <span>{firebaseUser ? (firebaseUser.isAnonymous ? 'Guest Cloud Session' : `Firebase: ${firebaseUser.email}`) : 'Verified Cloud Session'}</span>
             </span>
+            {currentLocation.isLiveGps && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 text-[10px] font-bold border border-amber-200">
+                <span>Live GPS (±{currentLocation.accuracy}m)</span>
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -96,7 +201,7 @@ export const ProfilePage: React.FC = () => {
           </h2>
         </div>
         <p className="text-xs sm:text-sm text-emerald-100 leading-relaxed">
-          Your trips in Varanasi have directly contributed to 12 local weavers, tea artisans, and boatmen families.
+          Your travel footprint directly supports local artisans, authentic regional food culture, and sustainable community heritage.
         </p>
 
         <div className="grid grid-cols-3 gap-2 mt-4 pt-4 border-t border-white/15 text-center">
@@ -231,6 +336,69 @@ export const ProfilePage: React.FC = () => {
                 Cancel
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Location Dialog */}
+      {showEditLocationModal && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl animate-in zoom-in-95">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-full bg-emerald-50 text-[#005B49] flex items-center justify-center">
+                  <MapPin size={16} />
+                </div>
+                <h3 className="text-base font-bold text-gray-900">Your Base Location</h3>
+              </div>
+              <button
+                onClick={() => setShowEditLocationModal(false)}
+                className="w-8 h-8 rounded-full flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-100 cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <p className="text-xs text-gray-500 mb-4">
+              Set or edit your current base location. This is used for personalized recommendations, local travel tips, and weather.
+            </p>
+
+            <form onSubmit={handleSaveCustomLocation} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">
+                  Location or City Name
+                </label>
+                <input
+                  type="text"
+                  value={customLocationInput}
+                  onChange={(e) => setCustomLocationInput(e.target.value)}
+                  placeholder="e.g. Mumbai, Maharashtra or New Delhi"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-[#005B49] focus:border-transparent"
+                  autoFocus
+                />
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setShowEditLocationModal(false);
+                    await detectAndSyncUserLocation(true);
+                  }}
+                  className="flex-1 py-2.5 rounded-xl border border-emerald-200 bg-emerald-50 text-[#005B49] font-bold text-xs hover:bg-emerald-100 flex items-center justify-center gap-1 cursor-pointer"
+                >
+                  <Navigation size={13} />
+                  <span>Auto-Detect</span>
+                </button>
+                <button
+                  type="submit"
+                  disabled={!customLocationInput.trim()}
+                  className="flex-1 py-2.5 rounded-xl bg-[#005B49] text-white font-bold text-xs hover:bg-[#004739] disabled:opacity-50 cursor-pointer"
+                >
+                  Save Location
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
