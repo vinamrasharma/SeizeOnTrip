@@ -194,6 +194,8 @@ export interface UserLocation {
     lat: number;
     lng: number;
   };
+  lat?: number;
+  lng?: number;
   accuracy?: number;
   isLiveGps: boolean;
   timestamp?: string;

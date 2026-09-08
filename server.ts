@@ -10,6 +10,12 @@ async function startServer() {
 
   app.use(express.json());
 
+  // Permissions-Policy header to guarantee geolocation permission works in deployed and embedded environments
+  app.use((req, res, next) => {
+    res.setHeader('Permissions-Policy', 'geolocation=(self "*")');
+    next();
+  });
+
   // 1. Health Check
   app.get('/api/health', (req, res) => {
     res.json({
@@ -409,13 +415,26 @@ async function startServer() {
   // Location: Instant IP Geolocation (Detects user origin immediately)
   app.get('/api/location/ip-detect', async (req, res) => {
     try {
+      // Extract client's real public IP from proxy / Cloud Run headers
+      const forwardedFor = (req.headers['x-forwarded-for'] as string) || '';
+      const rawClientIp = forwardedFor.split(',')[0].trim() || (req.socket.remoteAddress || '').replace(/^.*:/, '');
+
+      const isPrivateOrLocal = (ip: string) => {
+        if (!ip) return true;
+        if (ip === '127.0.0.1' || ip === '::1' || ip === 'localhost') return true;
+        if (ip.startsWith('10.') || ip.startsWith('192.168.')) return true;
+        if (/^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(ip)) return true;
+        return false;
+      };
+
+      const ipQueryUrl = rawClientIp && !isPrivateOrLocal(rawClientIp)
+        ? `http://ip-api.com/json/${rawClientIp}?fields=status,message,country,countryCode,region,regionName,city,zip,lat,lon,timezone`
+        : 'http://ip-api.com/json/?fields=status,message,country,countryCode,region,regionName,city,zip,lat,lon,timezone';
+
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 3500);
 
-      const ipRes = await fetch(
-        'http://ip-api.com/json/?fields=status,message,country,countryCode,region,regionName,city,zip,lat,lon,timezone',
-        { signal: controller.signal }
-      );
+      const ipRes = await fetch(ipQueryUrl, { signal: controller.signal });
       clearTimeout(timeoutId);
 
       if (ipRes.ok) {

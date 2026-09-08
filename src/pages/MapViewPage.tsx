@@ -44,8 +44,8 @@ export const MapViewPage: React.FC = () => {
       return [stop.coordinates.lat, stop.coordinates.lng];
     }
     // Fallback based on city / destination
-    const baseLat = currentLocation?.lat || 25.3176;
-    const baseLng = currentLocation?.lng || 82.9739;
+    const baseLat = currentLocation?.coordinates?.lat ?? currentLocation?.lat ?? 25.3176;
+    const baseLng = currentLocation?.coordinates?.lng ?? currentLocation?.lng ?? 82.9739;
     return [baseLat + (index * 0.008 - 0.015), baseLng + (index * 0.006 - 0.01)];
   };
 
@@ -191,24 +191,31 @@ export const MapViewPage: React.FC = () => {
     const map = mapInstanceRef.current;
     if (!map || !currentLocation) return;
 
+    const userLat = currentLocation.coordinates?.lat ?? currentLocation.lat;
+    const userLng = currentLocation.coordinates?.lng ?? currentLocation.lng;
+
+    if (typeof userLat !== 'number' || typeof userLng !== 'number' || isNaN(userLat) || isNaN(userLng)) {
+      return;
+    }
+
     if (userMarkerRef.current) {
-      userMarkerRef.current.setLatLng([currentLocation.lat, currentLocation.lng]);
+      userMarkerRef.current.setLatLng([userLat, userLng]);
     } else {
       const userIcon = L.divIcon({
         className: 'user-location-marker',
         html: `
           <div class="relative flex items-center justify-center">
-            <div class="absolute w-7 h-7 rounded-full bg-blue-400 opacity-60 animate-ping"></div>
-            <div class="w-4 h-4 rounded-full bg-blue-600 border-2 border-white shadow-lg"></div>
+            <div class="absolute w-7 h-7 rounded-full bg-emerald-400 opacity-60 animate-ping"></div>
+            <div class="w-4 h-4 rounded-full bg-[#005B49] border-2 border-white shadow-lg"></div>
           </div>
         `,
         iconSize: [28, 28],
         iconAnchor: [14, 14],
       });
 
-      userMarkerRef.current = L.marker([currentLocation.lat, currentLocation.lng], { icon: userIcon })
+      userMarkerRef.current = L.marker([userLat, userLng], { icon: userIcon })
         .addTo(map)
-        .bindPopup('<b>You are here</b><br>Live GPS Position');
+        .bindPopup(`<b>You are here</b><br>${currentLocation.locality || 'Live GPS Position'}`);
     }
   }, [currentLocation]);
 
@@ -222,9 +229,11 @@ export const MapViewPage: React.FC = () => {
   };
 
   const handleRecenter = async () => {
-    if (currentLocation && mapInstanceRef.current) {
-      mapInstanceRef.current.setView([currentLocation.lat, currentLocation.lng], 15);
-      showToast('Centered on your live location');
+    const userLat = currentLocation?.coordinates?.lat ?? currentLocation?.lat;
+    const userLng = currentLocation?.coordinates?.lng ?? currentLocation?.lng;
+    if (typeof userLat === 'number' && typeof userLng === 'number' && !isNaN(userLat) && !isNaN(userLng) && mapInstanceRef.current) {
+      mapInstanceRef.current.setView([userLat, userLng], 15);
+      showToast(`Centered on ${currentLocation.locality || 'your live location'}`);
     } else {
       await fetchLiveLocation();
     }
@@ -235,8 +244,10 @@ export const MapViewPage: React.FC = () => {
     const coords = getStopCoordinates(stop, index);
     const dest = `${coords[0]},${coords[1]}`;
     let origin = '';
-    if (currentLocation) {
-      origin = `${currentLocation.lat},${currentLocation.lng}`;
+    const userLat = currentLocation?.coordinates?.lat ?? currentLocation?.lat;
+    const userLng = currentLocation?.coordinates?.lng ?? currentLocation?.lng;
+    if (typeof userLat === 'number' && typeof userLng === 'number') {
+      origin = `${userLat},${userLng}`;
     } else if (index > 0 && stops[index - 1]) {
       const prevCoords = getStopCoordinates(stops[index - 1], index - 1);
       origin = `${prevCoords[0]},${prevCoords[1]}`;

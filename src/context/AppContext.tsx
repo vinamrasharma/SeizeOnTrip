@@ -346,6 +346,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     country: 'India',
     formattedAddress: 'Assi Ghat, Varanasi, Uttar Pradesh',
     coordinates: { lat: 25.2958, lng: 83.0089 },
+    lat: 25.2958,
+    lng: 83.0089,
     accuracy: 10,
     isLiveGps: false,
     timestamp: 'Initial',
@@ -510,8 +512,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           directionsUrl: '#',
         };
       }
-      const lat1 = currentLocation.coordinates.lat;
-      const lon1 = currentLocation.coordinates.lng;
+      const lat1 = currentLocation?.coordinates?.lat ?? currentLocation?.lat ?? 25.2958;
+      const lon1 = currentLocation?.coordinates?.lng ?? currentLocation?.lng ?? 83.0089;
       const lat2 = targetCoords.lat;
       const lon2 = targetCoords.lng;
 
@@ -592,63 +594,113 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     let detectedCityOrLocality = '';
 
-    // Step 1: Instant IP-based detection baseline (Works immediately without GPS prompt)
-    try {
-      const ipRes = await safeFetchJson<any>('/api/location/ip-detect');
-      if (ipRes.ok && ipRes.data?.success && ipRes.data?.city) {
-        const ipData = ipRes.data;
-        const locStr = ipData.formattedLocation || `${ipData.city}, ${ipData.country}`;
-        detectedCityOrLocality = locStr;
+    // Step 1: Check browser support
+    const hasGeolocation = typeof window !== 'undefined' && Boolean(navigator?.geolocation);
 
-        const ipLocation: UserLocation = {
-          locality: ipData.locality || ipData.city,
-          sublocality: ipData.region || ipData.city,
-          city: ipData.city,
-          state: ipData.region || '',
-          country: ipData.country || '',
-          formattedAddress: locStr,
-          coordinates: { lat: ipData.lat || 25.3176, lng: ipData.lng || 82.9739 },
-          accuracy: 1000,
-          isLiveGps: false,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          source: 'Network IP Location',
-        };
-
-        setCurrentLocation(ipLocation);
-        setSelectedCity(ipData.city);
-
-        // Update user profile immediately
-        setUser((prev) => {
-          const updated = {
-            ...prev,
-            location: locStr,
-            homeCity: locStr,
-          };
-          localStorage.setItem('seizeon_current_user', JSON.stringify(updated));
-          return updated;
-        });
+    if (hasGeolocation) {
+      // Check permissions if supported
+      if (typeof navigator.permissions?.query === 'function') {
+        try {
+          const permStatus = await navigator.permissions.query({ name: 'geolocation' });
+          if (permStatus.state === 'denied') {
+            const deniedMsg = 'Location permission is blocked in your browser. Click the lock/tune icon in the address bar to allow location, or choose a spot below.';
+            setLocationError(deniedMsg);
+            if (showToastNotification) {
+              showToast('⚠️ Location access is blocked in browser settings');
+            }
+          }
+        } catch {
+          // Permissions API query not universally supported, ignore
+        }
       }
-    } catch (ipErr) {
-      console.warn('IP detect baseline note:', ipErr);
-    }
 
-    // Step 2: High-accuracy hardware GPS detection
-    if (typeof window !== 'undefined' && navigator.geolocation) {
+      // Step 2: Multi-tier geolocation detection
       try {
         const position = await new Promise<GeolocationPosition>((resolve, reject) => {
-          navigator.geolocation.getCurrentPosition(resolve, reject, {
-            enableHighAccuracy: true,
-            timeout: 10000,
-            maximumAge: 5000,
-          });
+          let hasSettled = false;
+
+          const handleSuccess = (pos: GeolocationPosition) => {
+            if (!hasSettled) {
+              hasSettled = true;
+              resolve(pos);
+            }
+          };
+
+          // Attempt 1: High accuracy (GPS / GNSS hardware satellites) with 6s timeout
+          navigator.geolocation.getCurrentPosition(
+            handleSuccess,
+            (err1) => {
+              // If user explicitly clicked "Block" / "Don't Allow", don't retry, reject immediately
+              if (err1.code === 1) {
+                if (!hasSettled) {
+                  hasSettled = true;
+                  reject(err1);
+                }
+                return;
+              }
+
+              console.warn('High-accuracy GPS attempt failed (code ' + err1.code + '), retrying with standard/WiFi network accuracy...');
+
+              // Attempt 2: Standard accuracy (Cell tower / Wi-Fi triangulation) with 12s timeout & cached position tolerance
+              navigator.geolocation.getCurrentPosition(
+                handleSuccess,
+                (err2) => {
+                  if (!hasSettled) {
+                    hasSettled = true;
+                    reject(err2);
+                  }
+                },
+                {
+                  enableHighAccuracy: false,
+                  timeout: 12000,
+                  maximumAge: 300000, // 5 min cached position allowed
+                }
+              );
+            },
+            {
+              enableHighAccuracy: true,
+              timeout: 6000,
+              maximumAge: 10000,
+            }
+          );
         });
 
+        // SUCCESSFUL GPS FIX!
         const lat = position.coords.latitude;
         const lng = position.coords.longitude;
         const accuracy = Math.round(position.coords.accuracy || 10);
 
-        // Reverse-geocode coordinates through server
+        const latLabel = `${Math.abs(lat).toFixed(4)}°${lat >= 0 ? 'N' : 'S'}`;
+        const lngLabel = `${Math.abs(lng).toFixed(4)}°${lng >= 0 ? 'E' : 'W'}`;
+        const coordsStr = `GPS: ${latLabel}, ${lngLabel}`;
+        detectedCityOrLocality = coordsStr;
+
+        // Immediately commit hardware coordinates so distance calculations, maps & pins update immediately!
+        const immediateGpsLocation: UserLocation = {
+          locality: coordsStr,
+          sublocality: `±${accuracy}m precision`,
+          city: 'Detected Spot',
+          state: '',
+          country: '',
+          formattedAddress: `Coordinates: ${latLabel}, ${lngLabel} (±${accuracy}m accuracy)`,
+          coordinates: { lat, lng },
+          lat,
+          lng,
+          accuracy,
+          isLiveGps: true,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          source: 'Device Hardware GPS',
+        };
+
+        setCurrentLocation(immediateGpsLocation);
+        setLocationError(null);
+
+        // Step 3: Reverse geocoding to resolve street & city name
+        let resolvedLocality = coordsStr;
+        let resolvedCity = '';
+
         try {
+          // Backend reverse geocoding
           const res = await safeFetchJson<any>(`/api/location/reverse-geocode?lat=${lat}&lng=${lng}&accuracy=${accuracy}`);
           if (res.ok && res.data) {
             const data = res.data;
@@ -656,78 +708,169 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             const primaryLoc =
               data.locality && !fullLoc.includes(data.locality)
                 ? `${data.locality}, ${data.city || data.state || data.country}`
-                : fullLoc || data.formattedAddress || 'Detected Location';
+                : fullLoc || data.formattedAddress || coordsStr;
 
-            detectedCityOrLocality = primaryLoc;
+            resolvedLocality = data.locality || primaryLoc;
+            resolvedCity = data.city || '';
 
-            const highAccLoc: UserLocation = {
-              locality: data.locality || primaryLoc,
+            const enrichedLoc: UserLocation = {
+              locality: resolvedLocality,
               sublocality: data.sublocality || data.city || '',
               city: data.city || 'Detected City',
               state: data.state || '',
               country: data.country || '',
               formattedAddress: data.formattedAddress || primaryLoc,
               coordinates: { lat, lng },
+              lat,
+              lng,
               accuracy,
               isLiveGps: true,
               timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
               source: data.source || 'High-Accuracy Reverse Geocoding',
             };
 
-            setCurrentLocation(highAccLoc);
+            setCurrentLocation(enrichedLoc);
             if (data.city) setSelectedCity(data.city);
+            detectedCityOrLocality = primaryLoc;
+          } else {
+            // Client-side fallback to free BigDataCloud reverse geocode if backend reverse-geocoding couldn't reach
+            try {
+              const bdcUrl = `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lng}&localityLanguage=en`;
+              const bdcRes = await fetch(bdcUrl);
+              if (bdcRes.ok) {
+                const bdc = await bdcRes.json();
+                const bdcCity = bdc.city || bdc.locality || bdc.principalSubdivision || '';
+                const bdcLoc = bdc.locality || bdc.city || '';
+                if (bdcCity || bdcLoc) {
+                  resolvedCity = bdcCity;
+                  resolvedLocality = bdcLoc || bdcCity;
+                  const bdcAddr = [resolvedLocality, bdcCity, bdc.principalSubdivision, bdc.countryName].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(', ');
 
-            // Update user profile state, localStorage, backend and Firestore
-            setUser((prev) => {
-              const updatedUser: UserProfile = {
-                ...prev,
-                location: primaryLoc,
-                homeCity: primaryLoc,
-              };
-              localStorage.setItem('seizeon_current_user', JSON.stringify(updatedUser));
-
-              // Persist to backend
-              safeFetchJson('/api/auth/update-profile', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  email: updatedUser.email,
-                  location: primaryLoc,
-                  homeCity: primaryLoc,
-                }),
-              }).catch(() => {});
-
-              // Persist to Firestore
-              try {
-                const userDocRef = doc(db, 'users', updatedUser.id);
-                setDoc(userDocRef, { location: primaryLoc, homeCity: primaryLoc }, { merge: true }).catch(() => {});
-              } catch {}
-
-              return updatedUser;
-            });
-
-            if (showToastNotification) {
-              showToast(`📍 Accurate Location: ${primaryLoc} (±${accuracy}m GPS)`);
+                  setCurrentLocation((prev) => ({
+                    ...prev,
+                    locality: resolvedLocality,
+                    city: resolvedCity || prev.city,
+                    state: bdc.principalSubdivision || prev.state,
+                    country: bdc.countryName || prev.country,
+                    formattedAddress: bdcAddr || prev.formattedAddress,
+                  }));
+                  if (bdcCity) setSelectedCity(bdcCity);
+                  detectedCityOrLocality = bdcAddr;
+                }
+              }
+            } catch (bdcErr) {
+              console.warn('Client reverse geocode fallback note:', bdcErr);
             }
-            setIsLocating(false);
-            return primaryLoc;
           }
         } catch (apiErr) {
           console.warn('Backend reverse geocode note:', apiErr);
         }
-      } catch (geoErr: any) {
+
+        // Persist to user profile
+        const finalLabel = detectedCityOrLocality || coordsStr;
+        setUser((prev) => {
+          const updatedUser: UserProfile = {
+            ...prev,
+            location: finalLabel,
+            homeCity: resolvedCity || finalLabel,
+          };
+          localStorage.setItem('seizeon_current_user', JSON.stringify(updatedUser));
+
+          // Persist to backend & Firestore
+          safeFetchJson('/api/auth/update-profile', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              email: updatedUser.email,
+              location: finalLabel,
+              homeCity: resolvedCity || finalLabel,
+            }),
+          }).catch(() => {});
+
+          try {
+            const userDocRef = doc(db, 'users', updatedUser.id);
+            setDoc(userDocRef, { location: finalLabel, homeCity: resolvedCity || finalLabel }, { merge: true }).catch(() => {});
+          } catch {}
+
+          return updatedUser;
+        });
+
         if (showToastNotification) {
-          if (geoErr.code === 1) {
-            showToast('Browser location access denied. Showing network location.');
-          } else {
-            showToast('GPS unavailable. Showing network location.');
+          showToast(`📍 Live Location: ${resolvedLocality} (±${accuracy}m GPS)`);
+        }
+        setIsLocating(false);
+        return finalLabel;
+
+      } catch (geoErr: any) {
+        console.warn('GPS detection error:', geoErr);
+        if (geoErr.code === 1) {
+          const msg = 'Location permission was denied in your browser. Click the lock/site settings icon in the address bar to allow location, or choose a locality below.';
+          setLocationError(msg);
+          if (showToastNotification) {
+            showToast('⚠️ Location access was denied in browser settings');
+          }
+        } else if (geoErr.code === 2) {
+          const msg = 'GPS signal unavailable from your device. Please ensure device location is enabled, or select your location below.';
+          setLocationError(msg);
+          if (showToastNotification) {
+            showToast('⚠️ GPS position unavailable on device');
+          }
+        } else if (geoErr.code === 3) {
+          const msg = 'GPS detection timed out. Please click "Detect Live GPS" again or select a locality.';
+          setLocationError(msg);
+          if (showToastNotification) {
+            showToast('⚠️ GPS detection timed out, please try again');
+          }
+        } else {
+          const msg = geoErr?.message || 'Could not detect GPS location.';
+          setLocationError(msg);
+          if (showToastNotification) {
+            showToast(`⚠️ ${msg}`);
           }
         }
       }
+    } else {
+      const msg = 'Geolocation is not supported by your browser or requires a secure HTTPS connection.';
+      setLocationError(msg);
+      if (showToastNotification) {
+        showToast('⚠️ Geolocation not supported or requires HTTPS');
+      }
     }
 
-    if (showToastNotification && detectedCityOrLocality) {
-      showToast(`📍 Location updated: ${detectedCityOrLocality}`);
+    // Step 4: Fallback to network IP detection if GPS was unavailable and no live GPS is set
+    try {
+      const ipRes = await safeFetchJson<any>('/api/location/ip-detect');
+      if (ipRes.ok && ipRes.data?.success && ipRes.data?.city) {
+        const ipData = ipRes.data;
+        const locStr = ipData.formattedLocation || `${ipData.city}, ${ipData.country}`;
+        detectedCityOrLocality = locStr;
+
+        setCurrentLocation((prev) => {
+          if (prev.isLiveGps) return prev;
+          return {
+            locality: ipData.locality || ipData.city,
+            sublocality: ipData.region || ipData.city,
+            city: ipData.city,
+            state: ipData.region || '',
+            country: ipData.country || '',
+            formattedAddress: locStr,
+            coordinates: { lat: ipData.lat || 25.3176, lng: ipData.lng || 82.9739 },
+            lat: ipData.lat || 25.3176,
+            lng: ipData.lng || 82.9739,
+            accuracy: 1500,
+            isLiveGps: false,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            source: 'Network IP Location',
+          };
+        });
+
+        if (ipData.city) setSelectedCity(ipData.city);
+        if (showToastNotification) {
+          showToast(`📍 Approximate Location: ${locStr}`);
+        }
+      }
+    } catch (ipErr) {
+      console.warn('IP detect baseline note:', ipErr);
     }
 
     setIsLocating(false);
