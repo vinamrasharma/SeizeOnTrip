@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { Place } from '../types';
 import { calculateWholePlaceExpenses } from '../utils/travelExpenses';
+import { safeFetchJson } from '../utils/apiHelper';
 import { Coins, Navigation as NavigationIcon, Banknote } from 'lucide-react';
 
 export const ExplorePage: React.FC = () => {
@@ -90,12 +91,9 @@ export const ExplorePage: React.FC = () => {
         const catParam = selectedCategory !== 'all' ? `&category=${selectedCategory}` : '';
         const regionParam = regionScope !== 'all' ? `&region=${regionScope}` : '';
         const url = `/api/places/discover?query=${encodeURIComponent(q)}${catParam}${regionParam}`;
-        const res = await fetch(url);
-        if (res.ok) {
-          const data = await res.json();
-          if (isMounted && Array.isArray(data.places)) {
-            setApiDiscoveredPlaces(data.places);
-          }
+        const res = await safeFetchJson<{ places: Place[] }>(url);
+        if (res.ok && isMounted && Array.isArray(res.data?.places)) {
+          setApiDiscoveredPlaces(res.data.places);
         }
       } catch (err) {
         console.warn('Discovery API fetch error:', err);

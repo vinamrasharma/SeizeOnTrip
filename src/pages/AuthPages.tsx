@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { useApp } from '../context/AppContext';
+import { useApp, defaultAccounts, saveLocalRegisteredAccount, getLocalRegisteredUsers } from '../context/AppContext';
 import { Logo } from '../components/common/Logo';
+import { safeFetchJson } from '../utils/apiHelper';
 import {
   Eye,
   EyeOff,
@@ -94,7 +95,7 @@ export const LoginPage: React.FC = () => {
 
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanEmail = forgotEmail.trim();
+    const cleanEmail = forgotEmail.trim().toLowerCase();
     if (!cleanEmail || !validateEmail(cleanEmail)) {
       setForgotStatus({ error: 'Please enter a valid registered email address.' });
       return;
@@ -106,16 +107,30 @@ export const LoginPage: React.FC = () => {
 
     setForgotStatus({ loading: true });
     try {
-      const res = await fetch('/api/auth/reset-password', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: cleanEmail, newPassword }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to reset password.');
+      const serverRes = await safeFetchJson<{ success: boolean; message?: string; error?: string }>(
+        '/api/auth/reset-password',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: cleanEmail, newPassword }),
+        }
+      );
+
+      // Also update local registered account or default account so login works immediately
+      const localUsers = getLocalRegisteredUsers();
+      if (localUsers[cleanEmail]) {
+        saveLocalRegisteredAccount(cleanEmail, {
+          ...localUsers[cleanEmail],
+          passwordHash: newPassword,
+        });
+      } else if (defaultAccounts[cleanEmail]) {
+        saveLocalRegisteredAccount(cleanEmail, {
+          user: defaultAccounts[cleanEmail].user,
+          passwordHash: newPassword,
+        });
       }
-      setForgotStatus({ success: data.message || 'Password has been updated! You can now log in.' });
+
+      setForgotStatus({ success: serverRes.data?.message || 'Password has been updated! You can now log in.' });
       showToast('Password reset successfully!');
       setIdentifier(cleanEmail);
       setPassword(newPassword);
@@ -234,6 +249,13 @@ export const LoginPage: React.FC = () => {
             </span>
           </div>
           <div className="flex flex-wrap gap-1.5">
+            <button
+              type="button"
+              onClick={() => fillCredentials('vinamra123409@gmail.com', 'Password123!')}
+              className="px-2.5 py-1 rounded-lg bg-white border border-amber-300 font-semibold hover:bg-amber-100/50 cursor-pointer text-[11px] transition-colors"
+            >
+              Vinamra (Creator)
+            </button>
             <button
               type="button"
               onClick={() => fillCredentials('explorer@seizeontrip.com', 'Varanasi2026!')}

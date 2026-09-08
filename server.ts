@@ -1315,6 +1315,27 @@ Current User Locality: ${locality}. User Style: ${travelStyle}.`;
     });
   });
 
+  // Ensure all unmatched API routes return JSON 404 instead of falling through to HTML
+  app.all('/api/*', (req, res) => {
+    res.status(404).json({
+      error: `API route not found: ${req.method} ${req.path}`,
+      status: 'not_found',
+    });
+  });
+
+  // Global API error handler ensuring JSON responses
+  app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (req.path.startsWith('/api')) {
+      console.error('API Error:', err);
+      res.status(500).json({
+        error: err?.message || 'Internal server error occurred.',
+        status: 'error',
+      });
+      return;
+    }
+    next(err);
+  });
+
   // Vite middleware setup
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({

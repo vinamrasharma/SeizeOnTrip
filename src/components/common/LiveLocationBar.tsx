@@ -21,6 +21,7 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import { VaranasiLocality, LocationSearchResult } from '../../types';
+import { safeFetchJson } from '../../utils/apiHelper';
 
 interface LiveLocationBarProps {
   compact?: boolean;
@@ -387,24 +388,24 @@ const LocalitySearchModal: React.FC<LocalitySearchModalProps> = ({
 
       // 2. Fallback geocode via OpenStreetMap Nominatim directly
       const q = encodeURIComponent(`${searchQuery.trim()}, Varanasi, Uttar Pradesh, India`);
-      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${q}&limit=1`, {
-        headers: { 'User-Agent': 'SeizeOnTrip-Explorer/1.0' },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data && data.length > 0) {
-          const lat = parseFloat(data[0].lat);
-          const lng = parseFloat(data[0].lon);
-          setCustomLocation({
-            name: searchQuery.trim(),
-            locality: 'Detected Nearby Spot',
-            coordinates: { lat, lng },
-            formattedAddress: data[0].display_name,
-            source: 'OpenStreetMap Geocoded',
-          });
-          onClose();
-          return;
+      const { ok, data } = await safeFetchJson<any[]>(
+        `https://nominatim.openstreetmap.org/search?format=json&q=${q}&limit=1`,
+        {
+          headers: { 'User-Agent': 'SeizeOnTrip-Explorer/1.0' },
         }
+      );
+      if (ok && data && data.length > 0) {
+        const lat = parseFloat(data[0].lat);
+        const lng = parseFloat(data[0].lon);
+        setCustomLocation({
+          name: searchQuery.trim(),
+          locality: 'Detected Nearby Spot',
+          coordinates: { lat, lng },
+          formattedAddress: data[0].display_name,
+          source: 'OpenStreetMap Geocoded',
+        });
+        onClose();
+        return;
       }
 
       // 3. Fallback: center around Varanasi central with user's written label

@@ -164,6 +164,7 @@ export interface UserProfile {
   joinedDate?: string;
   tripsCount: number;
   savedCount: number;
+  savedPlaceIds?: string[];
   reviewsCount: number;
   levelBadge: string;
   preferences: {
